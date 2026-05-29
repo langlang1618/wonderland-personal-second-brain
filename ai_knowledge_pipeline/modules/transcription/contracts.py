@@ -1,0 +1,53 @@
+"""Public contracts for the transcription module."""
+
+from ai_knowledge_pipeline.modules.transcription.errors import (
+    TranscriptionErrorCode,
+    TranscriptionIssue,
+    TranscriptionIssueSeverity,
+)
+from ai_knowledge_pipeline.modules.transcription.interfaces import (
+    Transcriber,
+    TranscriptionProvider,
+)
+from ai_knowledge_pipeline.modules.transcription.providers import (
+    UnavailableTranscriptionProvider,
+)
+from ai_knowledge_pipeline.modules.transcription.transcriber import (
+    DefaultTranscriber,
+    create_default_transcriber,
+)
+from ai_knowledge_pipeline.modules.transcription.types import (
+    ProviderTranscriptionResult,
+    SpeakerMetadata,
+    TranscriptArtifact,
+    TranscriptFormat,
+    TranscriptSegment,
+    TranscriptTimestamp,
+    TranscriptionConfig,
+    TranscriptionProviderKind,
+    TranscriptionRequest,
+    TranscriptionResult,
+    TranscriptionStatus,
+)
+
+__all__ = [
+    "DefaultTranscriber",
+    "ProviderTranscriptionResult",
+    "SpeakerMetadata",
+    "Transcriber",
+    "TranscriptArtifact",
+    "TranscriptFormat",
+    "TranscriptSegment",
+    "TranscriptTimestamp",
+    "TranscriptionConfig",
+    "TranscriptionErrorCode",
+    "TranscriptionIssue",
+    "TranscriptionIssueSeverity",
+    "TranscriptionProvider",
+    "TranscriptionProviderKind",
+    "TranscriptionRequest",
+    "TranscriptionResult",
+    "TranscriptionStatus",
+    "UnavailableTranscriptionProvider",
+    "create_default_transcriber",
+]

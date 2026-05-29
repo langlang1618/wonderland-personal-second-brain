@@ -1,0 +1,90 @@
+# Example project configuration.
+# Real local settings should live in configs/local.yaml or environment variables.
+
+paths:
+  data_dir: data
+  raw_dir: data/raw
+  media_dir: data/media
+  chunks_dir: data/chunks
+  raw_transcripts_dir: data/transcripts/raw
+  cleaned_transcripts_dir: data/transcripts/cleaned
+  markdown_dir: data/markdown
+  obsidian_staging_dir: data/obsidian
+  tmp_dir: data/tmp
+
+pipeline:
+  chunk_minutes: 30
+  prefer_audio: true
+
+sources:
+  source_manifest_dir: data/raw/sources
+  default_language: null
+  default_tags: []
+  allow_remote_sources: true
+  allow_local_sources: true
+  manifest_format: json
+  manifest_version: v1
+  detection:
+    minimum_confidence: 0.8
+    prefer_user_hints: true
+  validators:
+    require_supported_media_type: true
+    require_existing_local_path: true
+
+runtime:
+  manifest_dir: data/raw/pipeline-runs
+  event_log_dir: data/raw/pipeline-events
+  enable_event_log: true
+  enable_resume: true
+  max_concurrent_tasks: 1
+  default_retry_policy:
+    max_attempts: 1
+    backoff: none
+    initial_delay_seconds: 0
+    max_delay_seconds: null
+
+artifacts:
+  registry_dir: data/raw/artifacts
+  content_root_dir: data
+  manifest_version: v1
+  default_integrity_algorithm: sha256
+  lifecycle_policy:
+    append_only: true
+    immutable_snapshots: true
+    keep_superseded_versions: true
+    verify_integrity_on_register: true
+    allow_tombstone: true
+
+download:
+  media_dir: data/media
+  temp_dir: data/tmp/downloads
+  prefer_audio: true
+  mode: materialize
+  ytdlp_binary: yt-dlp
+  output_template: "{source_id}.%(ext)s"
+  keep_original_local_path: true
+
+chunking:
+  chunks_dir: data/chunks
+  temp_dir: data/tmp/chunks
+  chunk_duration_seconds: 1800
+  mode: materialize
+  ffmpeg_binary: ffmpeg
+  output_extension: .m4a
+  segmentation_strategy: fixed_duration
+  subprocess_timeout_seconds: null
+
+transcription:
+  raw_transcripts_dir: data/transcripts/raw
+  provider: mock
+  transcript_format: json
+  language: null
+  model_name: null
+  prompt_version: null
+
+cleaning:
+  cleaned_transcripts_dir: data/transcripts/cleaned
+  provider: mock
+  model_name: null
+  prompt_version: cleaning-v1
+  language: null
