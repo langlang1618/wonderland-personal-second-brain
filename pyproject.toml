@@ -35,6 +35,9 @@ dependencies = []
 dev = [
   "pytest>=8",
 ]
+openai = [
+  "openai>=1.0",
+]
 
 # Future CLI entrypoint.
 # Enable after ai_knowledge_pipeline.cli exposes a callable main function.

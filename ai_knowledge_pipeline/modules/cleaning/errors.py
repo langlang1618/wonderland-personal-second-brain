@@ -15,6 +15,9 @@ class TranscriptCleaningErrorCode(StrEnum):
     INVALID_PROVIDER_RESULT = "invalid_provider_result"
     MISSING_TRANSCRIPT_TEXT = "missing_transcript_text"
     UNSUPPORTED_PROVIDER = "unsupported_provider"
+    MISSING_API_KEY = "missing_api_key"
+    SDK_UNAVAILABLE = "sdk_unavailable"
+    RESPONSE_PARSE_FAILED = "response_parse_failed"
 
 
 class TranscriptCleaningIssueSeverity(StrEnum):

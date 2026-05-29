@@ -86,9 +86,11 @@ transcription:
 cleaning:
   cleaned_transcripts_dir: data/transcripts/cleaned
   provider: mock
-  model_name: null
+  model_name: gpt-5-mini
   prompt_version: cleaning-v1
   language: null
+  env_path: .env
+  api_key_env_var: OPENAI_API_KEY
 
 markdown:
   markdown_dir: data/markdown

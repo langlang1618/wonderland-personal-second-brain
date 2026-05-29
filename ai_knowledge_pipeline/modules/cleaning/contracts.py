@@ -13,6 +13,7 @@ from ai_knowledge_pipeline.modules.cleaning.interfaces import (
     TranscriptCleaner,
     TranscriptCleaningProvider,
 )
+from ai_knowledge_pipeline.modules.cleaning.openai_provider import OpenAICleaningProvider
 from ai_knowledge_pipeline.modules.cleaning.providers import UnavailableCleaningProvider
 from ai_knowledge_pipeline.modules.cleaning.types import (
     ActionItem,
@@ -45,6 +46,7 @@ __all__ = [
     "MarkdownReadyBlock",
     "MarkdownReadyChapter",
     "MarkdownReadyTranscript",
+    "OpenAICleaningProvider",
     "TranscriptCleaner",
     "TranscriptCleaningConfig",
     "TranscriptCleaningErrorCode",

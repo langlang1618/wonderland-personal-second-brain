@@ -138,6 +138,8 @@ class TranscriptCleaningConfig:
     model_name: str | None = None
     prompt_version: str = "cleaning-v1"
     language: str | None = None
+    env_path: Path = Path(".env")
+    api_key_env_var: str = "OPENAI_API_KEY"
 
 
 @dataclass(frozen=True, slots=True)
