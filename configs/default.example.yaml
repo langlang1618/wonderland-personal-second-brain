@@ -88,3 +88,19 @@ cleaning:
   model_name: null
   prompt_version: cleaning-v1
   language: null
+
+markdown:
+  markdown_dir: data/markdown
+  include_frontmatter: true
+  include_summary: true
+  include_key_insights: true
+  include_action_items: true
+  include_tags_section: true
+  file_extension: .md
+
+obsidian:
+  vault_path: null
+  root_dir: AI Knowledge Pipeline
+  conflict_strategy: versioned
+  file_extension: .md
+  uncategorized_dir: uncategorized
