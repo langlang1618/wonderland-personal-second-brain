@@ -2,6 +2,7 @@
 
 from ai_knowledge_pipeline.modules.transcription.contracts import (
     DefaultTranscriber,
+    LocalWhisperProvider,
     ProviderTranscriptionResult,
     SpeakerMetadata,
     Transcriber,
@@ -24,6 +25,7 @@ from ai_knowledge_pipeline.modules.transcription.contracts import (
 
 __all__ = [
     "DefaultTranscriber",
+    "LocalWhisperProvider",
     "ProviderTranscriptionResult",
     "SpeakerMetadata",
     "Transcriber",

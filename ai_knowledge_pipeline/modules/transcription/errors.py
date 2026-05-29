@@ -15,6 +15,9 @@ class TranscriptionErrorCode(StrEnum):
     PROVIDER_FAILED = "provider_failed"
     INVALID_PROVIDER_RESULT = "invalid_provider_result"
     UNSUPPORTED_PROVIDER = "unsupported_provider"
+    MISSING_TRANSCRIPT_FILE = "missing_transcript_file"
+    UNSUPPORTED_TRANSCRIPT_FORMAT = "unsupported_transcript_format"
+    TRANSCRIPT_PARSE_FAILED = "transcript_parse_failed"
 
 
 class TranscriptionIssueSeverity(StrEnum):

@@ -5,6 +5,7 @@ from ai_knowledge_pipeline.demo.pipeline import (
     DemoPipelineRequest,
     DemoPipelineResult,
     run_local_audio_demo_pipeline,
+    run_local_whisper_demo_pipeline,
 )
 from ai_knowledge_pipeline.demo.providers import (
     DemoCleaningProvider,
@@ -18,4 +19,5 @@ __all__ = [
     "DemoPipelineResult",
     "DemoTranscriptionProvider",
     "run_local_audio_demo_pipeline",
+    "run_local_whisper_demo_pipeline",
 ]

@@ -81,6 +81,7 @@ transcription:
   language: null
   model_name: null
   prompt_version: null
+  local_transcript_path: null
 
 cleaning:
   cleaned_transcripts_dir: data/transcripts/cleaned

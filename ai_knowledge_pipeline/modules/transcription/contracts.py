@@ -9,6 +9,7 @@ from ai_knowledge_pipeline.modules.transcription.interfaces import (
     Transcriber,
     TranscriptionProvider,
 )
+from ai_knowledge_pipeline.modules.transcription.local_whisper import LocalWhisperProvider
 from ai_knowledge_pipeline.modules.transcription.providers import (
     UnavailableTranscriptionProvider,
 )
@@ -33,6 +34,7 @@ from ai_knowledge_pipeline.modules.transcription.types import (
 __all__ = [
     "DefaultTranscriber",
     "ProviderTranscriptionResult",
+    "LocalWhisperProvider",
     "SpeakerMetadata",
     "Transcriber",
     "TranscriptArtifact",

@@ -30,6 +30,7 @@ class TranscriptionProviderKind(StrEnum):
     WHISPER_CPP = "whisper_cpp"
     WHISPER_KIT = "whisper_kit"
     GROQ_WHISPER = "groq_whisper"
+    LOCAL_WHISPER = "local_whisper"
     MOCK = "mock"
 
 
@@ -96,6 +97,7 @@ class TranscriptionConfig:
     language: str | None = None
     model_name: str | None = None
     prompt_version: str | None = None
+    local_transcript_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)

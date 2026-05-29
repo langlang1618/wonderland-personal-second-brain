@@ -48,8 +48,10 @@ from ai_knowledge_pipeline.modules.sources import (
     create_default_sources_normalizer,
 )
 from ai_knowledge_pipeline.modules.transcription import (
+    LocalWhisperProvider,
     TranscriptArtifact,
     TranscriptionConfig,
+    TranscriptionProviderKind,
     TranscriptionRequest,
     create_default_transcriber,
 )
@@ -61,6 +63,7 @@ class DemoPipelineRequest:
 
     local_audio_path: Path
     temp_vault_path: Path
+    local_transcript_path: Path | None = None
     media_duration_seconds: float = 120
     chunk_duration_seconds: float = 120
     run_id: str = "demo-run"
@@ -118,6 +121,22 @@ def run_local_audio_demo_pipeline(
         artifacts=artifacts,
         obsidian_note_path=note.path,
         lineage_chain=lineage_chain,
+    )
+
+
+def run_local_whisper_demo_pipeline(
+    local_audio_path: Path,
+    local_transcript_path: Path,
+    temp_vault_path: Path,
+) -> DemoPipelineResult:
+    """Run the demo pipeline using a local Whisper transcript export."""
+
+    return run_local_audio_demo_pipeline(
+        DemoPipelineRequest(
+            local_audio_path=local_audio_path,
+            local_transcript_path=local_transcript_path,
+            temp_vault_path=temp_vault_path,
+        )
     )
 
 
@@ -179,10 +198,27 @@ def _transcribe_chunk(
     request: DemoPipelineRequest,
     chunk: MediaChunkArtifact,
 ) -> TranscriptArtifact:
-    result = create_default_transcriber(provider=DemoTranscriptionProvider()).transcribe(
+    provider = (
+        LocalWhisperProvider()
+        if request.local_transcript_path is not None
+        else DemoTranscriptionProvider()
+    )
+    provider_kind = (
+        TranscriptionProviderKind.LOCAL_WHISPER
+        if request.local_transcript_path is not None
+        else TranscriptionProviderKind.MOCK
+    )
+    result = create_default_transcriber(provider=provider).transcribe(
         TranscriptionRequest(
             chunk=chunk,
-            config=TranscriptionConfig(language="en", model_name="demo-whisper"),
+            config=TranscriptionConfig(
+                language="en",
+                model_name="local-whisper-import"
+                if request.local_transcript_path is not None
+                else "demo-whisper",
+                provider=provider_kind,
+                local_transcript_path=request.local_transcript_path,
+            ),
             run_id=request.run_id,
             job_id=request.job_id,
             task_id="demo-transcription",
@@ -286,4 +322,5 @@ __all__ = [
     "DemoPipelineRequest",
     "DemoPipelineResult",
     "run_local_audio_demo_pipeline",
+    "run_local_whisper_demo_pipeline",
 ]
