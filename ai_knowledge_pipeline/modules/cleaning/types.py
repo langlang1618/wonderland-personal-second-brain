@@ -24,6 +24,7 @@ class CleaningProviderKind(StrEnum):
     """Supported future cleaning provider families."""
 
     OPENAI = "openai"
+    DEEPSEEK = "deepseek"
     CLAUDE = "claude"
     GEMINI = "gemini"
     LOCAL_LLM = "local_llm"

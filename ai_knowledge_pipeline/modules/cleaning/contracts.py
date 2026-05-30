@@ -4,6 +4,7 @@ from ai_knowledge_pipeline.modules.cleaning.cleaner import (
     DefaultTranscriptCleaner,
     create_default_transcript_cleaner,
 )
+from ai_knowledge_pipeline.modules.cleaning.deepseek_provider import DeepSeekCleaningProvider
 from ai_knowledge_pipeline.modules.cleaning.errors import (
     TranscriptCleaningErrorCode,
     TranscriptCleaningIssue,
@@ -40,6 +41,7 @@ __all__ = [
     "CleaningPromptSchema",
     "CleaningProviderKind",
     "CleaningProviderResult",
+    "DeepSeekCleaningProvider",
     "DefaultTranscriptCleaner",
     "KeyInsight",
     "MarkdownBlockKind",
