@@ -169,6 +169,7 @@ class DefaultTranscriptCleaner(TranscriptCleaner):
                 "provider": self._provider.name,
                 "prompt_version": prompt_version,
             },
+            raw_transcript=transcript.text,
         )
 
 

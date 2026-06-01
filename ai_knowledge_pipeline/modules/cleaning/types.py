@@ -195,6 +195,7 @@ class CleanedTranscriptArtifact:
     uri: str
     snapshot: ArtifactSnapshot
     metadata: MetadataMap = field(default_factory=dict)
+    raw_transcript: str = ""
 
 
 @dataclass(frozen=True, slots=True)

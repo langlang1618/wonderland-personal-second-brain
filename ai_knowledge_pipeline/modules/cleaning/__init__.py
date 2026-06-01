@@ -10,6 +10,9 @@ from ai_knowledge_pipeline.modules.cleaning.contracts import (
     DeepSeekCleaningProvider,
     DefaultTranscriptCleaner,
     KeyInsight,
+    KnowledgeProfile,
+    KnowledgeProfileLoader,
+    KnowledgeProfileName,
     MarkdownBlockKind,
     MarkdownReadyBlock,
     MarkdownReadyChapter,
@@ -25,7 +28,9 @@ from ai_knowledge_pipeline.modules.cleaning.contracts import (
     TranscriptCleaningResult,
     TranscriptCleaningStatus,
     UnavailableCleaningProvider,
+    compose_cleaning_prompt,
     create_default_transcript_cleaner,
+    load_knowledge_profile,
 )
 
 __all__ = [
@@ -38,6 +43,9 @@ __all__ = [
     "DeepSeekCleaningProvider",
     "DefaultTranscriptCleaner",
     "KeyInsight",
+    "KnowledgeProfile",
+    "KnowledgeProfileLoader",
+    "KnowledgeProfileName",
     "MarkdownBlockKind",
     "MarkdownReadyBlock",
     "MarkdownReadyChapter",
@@ -53,5 +61,7 @@ __all__ = [
     "TranscriptCleaningResult",
     "TranscriptCleaningStatus",
     "UnavailableCleaningProvider",
+    "compose_cleaning_prompt",
     "create_default_transcript_cleaner",
+    "load_knowledge_profile",
 ]

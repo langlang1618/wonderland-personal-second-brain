@@ -16,6 +16,13 @@ from ai_knowledge_pipeline.modules.cleaning.interfaces import (
 )
 from ai_knowledge_pipeline.modules.cleaning.openai_provider import OpenAICleaningProvider
 from ai_knowledge_pipeline.modules.cleaning.providers import UnavailableCleaningProvider
+from ai_knowledge_pipeline.modules.cleaning.profiles import (
+    KnowledgeProfile,
+    KnowledgeProfileLoader,
+    KnowledgeProfileName,
+    compose_cleaning_prompt,
+    load_knowledge_profile,
+)
 from ai_knowledge_pipeline.modules.cleaning.types import (
     ActionItem,
     AgentMemoryCandidate,
@@ -44,6 +51,9 @@ __all__ = [
     "DeepSeekCleaningProvider",
     "DefaultTranscriptCleaner",
     "KeyInsight",
+    "KnowledgeProfile",
+    "KnowledgeProfileLoader",
+    "KnowledgeProfileName",
     "MarkdownBlockKind",
     "MarkdownReadyBlock",
     "MarkdownReadyChapter",
@@ -59,5 +69,7 @@ __all__ = [
     "TranscriptCleaningResult",
     "TranscriptCleaningStatus",
     "UnavailableCleaningProvider",
+    "compose_cleaning_prompt",
     "create_default_transcript_cleaner",
+    "load_knowledge_profile",
 ]

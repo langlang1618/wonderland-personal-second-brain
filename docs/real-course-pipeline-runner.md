@@ -33,6 +33,8 @@ Optional:
 - `--title`: title hint for the cleaning prompt.
 - `--tags`: comma-separated note tags.
 - `--model`: DeepSeek model override.
+- `--profile`: cleaning profile: `finance`, `ai`, `startup`, or `custom`.
+- `--profile-path`: custom Markdown prompt path for `--profile custom`.
 
 ## Environment
 
@@ -60,7 +62,8 @@ With vault path from `.env`:
 venv/bin/python scripts/run_real_course_pipeline.py \
   --transcript /path/to/course01.srt \
   --title "Course 01" \
-  --tags ai,course,obsidian
+  --tags ai,course,obsidian \
+  --profile ai
 ```
 
 With explicit vault:
@@ -72,6 +75,7 @@ venv/bin/python scripts/run_real_course_pipeline.py \
   --audio /path/to/course01.mp3 \
   --title "Course 01" \
   --tags ai,course \
+  --profile finance \
   --model deepseek-v4-flash
 ```
 

@@ -46,7 +46,10 @@ openai = [
 # ai-knowledge-pipeline = "ai_knowledge_pipeline.cli:main"
 
 [tool.setuptools]
-include-package-data = false
+include-package-data = true
+
+[tool.setuptools.package-data]
+"ai_knowledge_pipeline.modules.cleaning.profiles" = ["*.md", "*.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["."]

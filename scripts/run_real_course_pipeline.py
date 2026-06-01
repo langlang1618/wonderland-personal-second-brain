@@ -31,10 +31,13 @@ from ai_knowledge_pipeline.modules.cleaning import (
     CleanedTranscriptArtifact,
     CleaningPromptSchema,
     DeepSeekCleaningProvider,
+    KnowledgeProfileName,
     TranscriptCleaningConfig,
     TranscriptCleaningProvider,
     TranscriptCleaningRequest,
+    compose_cleaning_prompt,
     create_default_transcript_cleaner,
+    load_knowledge_profile,
 )
 from ai_knowledge_pipeline.modules.markdown import (
     MarkdownArtifact,
@@ -73,6 +76,8 @@ class RealCoursePipelineRequest:
     title: str | None = None
     tags: tuple[str, ...] = ()
     model: str = DEFAULT_DEEPSEEK_MODEL
+    profile: KnowledgeProfileName = KnowledgeProfileName.AI
+    custom_profile_path: Path | None = None
     env_path: Path = Path(".env")
     run_id: str = "real-course-run"
     job_id: str = "real-course-job"
@@ -148,6 +153,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         title=args.title,
         tags=_parse_tags(args.tags),
         model=model,
+        profile=KnowledgeProfileName(args.profile),
+        custom_profile_path=Path(args.profile_path) if args.profile_path else None,
     )
     try:
         result = run_real_course_pipeline(request)
@@ -300,6 +307,14 @@ def _clean_transcript(
         style_guide="Clear, structured course notes for long-term review.",
         prompt_version="real-course-cleaning-v1",
     )
+    try:
+        profile = load_knowledge_profile(
+            request.profile,
+            custom_profile_path=request.custom_profile_path,
+        )
+    except ValueError as exc:
+        raise RealCoursePipelineError(str(exc)) from exc
+    prompt = compose_cleaning_prompt(prompt, profile)
     result = create_default_transcript_cleaner(provider=provider).clean(
         TranscriptCleaningRequest(
             transcript=transcript,
@@ -368,6 +383,16 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--title", help="Optional course title hint.")
     parser.add_argument("--tags", help="Comma-separated note tags.")
     parser.add_argument("--model", help="DeepSeek model. Defaults to DEEPSEEK_MODEL.")
+    parser.add_argument(
+        "--profile",
+        choices=tuple(profile.value for profile in KnowledgeProfileName),
+        default=KnowledgeProfileName.AI.value,
+        help="Knowledge profile used to compose the cleaning prompt.",
+    )
+    parser.add_argument(
+        "--profile-path",
+        help="Custom Markdown prompt path. Required when --profile custom is used.",
+    )
     return parser.parse_args(argv)
 
 

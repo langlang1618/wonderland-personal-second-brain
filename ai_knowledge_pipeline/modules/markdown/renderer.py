@@ -125,6 +125,15 @@ def _body(request: MarkdownGenerationRequest) -> str:
         lines.append("")
 
     lines.extend(("## Clean Transcript", "", ready.cleaned_text, ""))
+    if request.cleaned_transcript.raw_transcript.strip():
+        lines.extend(
+            (
+                "# 原始转录",
+                "",
+                request.cleaned_transcript.raw_transcript,
+                "",
+            )
+        )
     return "\n".join(lines)
 
 

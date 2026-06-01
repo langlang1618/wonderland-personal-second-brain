@@ -118,6 +118,8 @@ def test_real_course_pipeline_generates_obsidian_note(tmp_path) -> None:
     assert "### 系统目标" in note_text
     assert "## Tags" in note_text
     assert "#course #deepseek #obsidian" in note_text
+    assert "# 原始转录" in note_text
+    assert "今天我们讲 AI Knowledge Pipeline 和 Obsidian。" in note_text
     assert result.artifacts.transcript.text.startswith("今天我们讲")
     assert result.artifacts.obsidian_note.snapshot.lineage.upstream_artifact_ids == (
         result.artifacts.markdown.markdown_artifact_id,
@@ -202,6 +204,27 @@ def test_real_course_pipeline_surfaces_cleaning_error(tmp_path) -> None:
         assert "Transcript cleaning failed" in str(exc)
     else:
         raise AssertionError("Expected cleaning error")
+
+
+def test_real_course_pipeline_requires_custom_profile_path(tmp_path) -> None:
+    transcript_path = tmp_path / "course01.txt"
+    transcript_path.write_text("hello", encoding="utf-8")
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+
+    try:
+        run_real_course_pipeline(
+            RealCoursePipelineRequest(
+                local_transcript_path=transcript_path,
+                obsidian_vault_path=vault_path,
+                profile="custom",
+            ),
+            cleaning_provider=MockDeepSeekProvider(),
+        )
+    except RealCoursePipelineError as exc:
+        assert "custom_profile_path is required" in str(exc)
+    else:
+        raise AssertionError("Expected custom profile path error")
 
 
 def test_real_course_pipeline_cli_uses_env_vault_and_prints_note_path(
