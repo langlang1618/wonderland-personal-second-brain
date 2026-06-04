@@ -14,7 +14,7 @@ Required capabilities:
 - repair typos and transcription errors
 - repair terminology
 - remove redundant spoken filler
-- produce readable_transcript_text as a readable source transcript
+- produce readable_transcript_text as a lightly repaired readable transcript
 - extract chapters
 - write a concise summary
 - extract key insights
@@ -28,15 +28,17 @@ Terminology: {terminology}
 Output requirements: {output_requirements}
 Style guide: {style_guide}
 
-Readable source transcript constraints:
+Readable transcript constraints:
 - output readable_transcript_text in Simplified Chinese
 - readable_transcript_text is not a summary
+- readable_transcript_text does not replace raw_transcript; the system preserves raw_transcript separately
 - keep the original lecture order and knowledge details
-- do not compress, rewrite, or reorganize the speaker's logic
+- do not compress, summarize, rewrite, or reorganize the speaker's logic
 - add Chinese punctuation, natural paragraphs, and section headings
-- repair obvious typo, accent, and terminology errors
-- remove greetings, course welcome chatter, livestream interaction, and content-free small talk
+- only lightly repair Traditional/Simplified conversion, punctuation, paragraphing, obvious typos, accent errors, and terminology
+- remove only obvious greetings, course welcome chatter, livestream interaction, and content-free small talk
 - preserve meaning and the original sequence of knowledge-bearing statements
+- do not delete knowledge details
 
 Raw transcript:
 {transcript_text}

@@ -31,7 +31,7 @@ class MockDeepSeekProvider:
                 cleaned_text="课程介绍了 AI Knowledge Pipeline 的本地优先处理链路。",
                 readable_transcript_text=(
                     "## 本地优先链路\n\n"
-                    "今天我们讲 AI Knowledge Pipeline 和 Obsidian。"
+                    "今天我们讲 AI Knowledge Pipeline 和 Obsidian。这里修复了标点。"
                 ),
                 chapters=(
                     MarkdownReadyChapter(
@@ -97,7 +97,8 @@ class FailingCleaningProvider:
 def test_real_course_pipeline_generates_obsidian_note(tmp_path) -> None:
     transcript_path = tmp_path / "course01.txt"
     transcript_path.write_text(
-        "今天我们讲 AI Knowledge Pipeline 和 Obsidian。", encoding="utf-8"
+        "歡迎大家今天我们讲 AI Knowledge Pipeline 和 Obsidian 还有一个原始细节",
+        encoding="utf-8",
     )
     vault_path = tmp_path / "vault"
     vault_path.mkdir()
@@ -123,9 +124,11 @@ def test_real_course_pipeline_generates_obsidian_note(tmp_path) -> None:
     assert "### 系统目标" in note_text
     assert "## Tags" in note_text
     assert "#course #deepseek #obsidian" in note_text
-    assert "# 原始转录" in note_text
-    assert "今天我们讲 AI Knowledge Pipeline 和 Obsidian。" in note_text
-    assert result.artifacts.transcript.text.startswith("今天我们讲")
+    assert "# 可读转录" in note_text
+    assert "这里修复了标点。" in note_text
+    assert "# 原始逐字稿" in note_text
+    assert "歡迎大家今天我们讲 AI Knowledge Pipeline 和 Obsidian 还有一个原始细节" in note_text
+    assert result.artifacts.transcript.text.startswith("歡迎大家")
     assert result.artifacts.obsidian_note.snapshot.lineage.upstream_artifact_ids == (
         result.artifacts.markdown.markdown_artifact_id,
     )

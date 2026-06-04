@@ -359,8 +359,10 @@ def test_deepseek_cleaning_output_flows_to_markdown_and_obsidian(tmp_path) -> No
     assert "## Key Insights" in note_text
     assert "## Action Items" in note_text
     assert "#deepseek #rag #obsidian" in note_text
-    assert "# 原始转录" in note_text
+    assert "# 可读转录" in note_text
     assert "这个课程讲 RAG、Agent Memory 和 Obsidian。" in note_text
+    assert "# 原始逐字稿" in note_text
+    assert "这个课程讲 rag agent memory 和 obsidian" in note_text
     assert write_result.note.snapshot.lineage.upstream_artifact_ids == (
         markdown_result.markdown.markdown_artifact_id,
     )

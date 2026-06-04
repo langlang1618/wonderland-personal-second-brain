@@ -69,9 +69,11 @@ venv/bin/python scripts/run_real_course_pipeline.py \
 rendering appends:
 
 ```markdown
-# 原始转录
+# 可读转录
+
+# 原始逐字稿
 ```
 
 This retains the source transcript for auditability and later regeneration.
-When `readable_transcript_text` exists, it is used for `# 原始转录`; otherwise
-Markdown falls back to the raw transcript.
+When `readable_transcript_text` exists, it is used for `# 可读转录`. The complete
+raw transcript is emitted separately as `# 原始逐字稿`.

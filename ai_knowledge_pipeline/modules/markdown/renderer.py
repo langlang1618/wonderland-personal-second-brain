@@ -125,17 +125,27 @@ def _body(request: MarkdownGenerationRequest) -> str:
         lines.append("")
 
     lines.extend(("## Clean Transcript", "", ready.cleaned_text, ""))
-    original_transcript = (
+    readable_transcript = (
         request.cleaned_transcript.readable_transcript_text
         or ready.readable_transcript_text
-        or request.cleaned_transcript.raw_transcript
     )
-    if original_transcript.strip():
+    if readable_transcript.strip():
         lines.extend(
             (
-                "# 原始转录",
+                "# 可读转录",
                 "",
-                original_transcript,
+                readable_transcript,
+                "",
+            )
+        )
+
+    raw_transcript = request.cleaned_transcript.raw_transcript
+    if raw_transcript:
+        lines.extend(
+            (
+                "# 原始逐字稿",
+                "",
+                raw_transcript,
                 "",
             )
         )

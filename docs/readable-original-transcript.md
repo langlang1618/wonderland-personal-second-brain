@@ -2,11 +2,11 @@
 
 ## Goal
 
-The `# 原始转录` section in generated Obsidian Markdown is now a readable source
-transcript, not a summary and not a rewritten article.
+Generated Obsidian Markdown now separates the readable transcript from the
+fully raw transcript.
 
-It keeps the original teaching order and knowledge details while improving
-readability.
+`# 可读转录` is a lightly repaired transcript for reading. `# 原始逐字稿` is the
+complete raw transcript for detail tracing and error checks.
 
 ## Data Model
 
@@ -24,16 +24,17 @@ readable_transcript_text
 ```
 
 The raw transcript remains available for auditability. The readable transcript
-is the preferred display text for Markdown.
+never replaces it.
 
 ## Provider Contract
 
 The `CleaningProvider` protocol is unchanged. Providers still return
 `CleaningProviderResult`.
 
-OpenAI-compatible providers now parse `readable_transcript_text` from provider
-JSON output. If an older provider response omits the field, the pipeline remains
-compatible and Markdown falls back to `raw_transcript`.
+OpenAI-compatible providers parse `readable_transcript_text` from provider JSON
+output. If an older provider response omits the field, the pipeline remains
+compatible: Markdown skips `# 可读转录` and still emits `# 原始逐字稿` from
+`raw_transcript`.
 
 ## Prompt Constraints
 
@@ -48,13 +49,14 @@ The base knowledge profile requires:
 - removal of greetings, welcome chatter, livestream interaction, and
   content-free small talk
 
-The readable transcript must not:
+The readable transcript is a light repair pass. It must not:
 
 - become a summary
 - compress knowledge details
 - reorder the lecture
 - rewrite the speaker's argument
 - delete knowledge-bearing details
+- replace the raw transcript
 
 ## Finance Profile
 
@@ -74,23 +76,31 @@ The finance prompt also reinforces terms such as 沃什、十年期美债、标�
 
 ## Markdown Rendering
 
-Markdown output is organized as:
+Markdown output is organized as three sections:
 
 ```markdown
 # AI整理部分
 
 ...
 
-# 原始转录
+# 可读转录
+
+...
+
+# 原始逐字稿
 
 ...
 ```
 
-For `# 原始转录`, the renderer uses this order:
+For `# 可读转录`, the renderer uses this order:
 
 1. `CleanedTranscriptArtifact.readable_transcript_text`
 2. `MarkdownReadyTranscript.readable_transcript_text`
-3. `CleanedTranscriptArtifact.raw_transcript`
 
-This preserves backward compatibility while preferring the readable transcript
-whenever the cleaning provider supplies it.
+For `# 原始逐字稿`, the renderer always uses:
+
+```text
+CleanedTranscriptArtifact.raw_transcript
+```
+
+This prevents readable transcript over-cleaning from hiding original details.

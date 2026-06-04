@@ -319,8 +319,10 @@ def test_openai_cleaning_output_flows_to_markdown_and_obsidian(tmp_path) -> None
     assert "## Key Insights" in note_text
     assert "## Action Items" in note_text
     assert "#rag #obsidian #agent-memory" in note_text
-    assert "# 原始转录" in note_text
+    assert "# 可读转录" in note_text
     assert "你好，世界。" in note_text
+    assert "# 原始逐字稿" in note_text
+    assert "helo wrld this is about rag and agent memory" in note_text
     assert write_result.note.snapshot.lineage.upstream_artifact_ids == (
         markdown_result.markdown.markdown_artifact_id,
     )

@@ -153,10 +153,11 @@ def test_markdown_generator_outputs_obsidian_ready_structure() -> None:
     assert "#rag #obsidian" in text
     assert "## Clean Transcript" in text
     assert "Clean transcript body." in text
-    assert "# 原始转录" in text
+    assert "# 可读转录" in text
     assert "## 可读版原文" in text
     assert "美联储沃什" in text
-    assert "歡迎大家來直播間" not in text
+    assert "# 原始逐字稿" in text
+    assert "歡迎大家來直播間今天講rag美聯儲臥石提到cpi和m2" in text
     assert markdown.path == Path("custom-markdown/src_1/chunk_0000_clean-lecture.md")
 
 
@@ -193,7 +194,7 @@ def test_markdown_generator_can_omit_frontmatter() -> None:
     assert result.markdown.markdown_text.startswith("# AI整理部分")
 
 
-def test_markdown_original_transcript_falls_back_to_raw_text() -> None:
+def test_markdown_raw_transcript_is_preserved_when_readable_is_missing() -> None:
     artifact = cleaned_artifact()
     artifact = CleanedTranscriptArtifact(
         cleaned_transcript_artifact_id=artifact.cleaned_transcript_artifact_id,
@@ -225,7 +226,8 @@ def test_markdown_original_transcript_falls_back_to_raw_text() -> None:
     )
 
     assert result.markdown is not None
-    assert "# 原始转录" in result.markdown.markdown_text
+    assert "# 可读转录" not in result.markdown.markdown_text
+    assert "# 原始逐字稿" in result.markdown.markdown_text
     assert "raw transcript fallback" in result.markdown.markdown_text
 
 
