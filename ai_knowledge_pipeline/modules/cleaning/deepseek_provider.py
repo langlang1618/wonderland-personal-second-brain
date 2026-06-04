@@ -17,6 +17,9 @@ from ai_knowledge_pipeline.modules.cleaning.prompt_templates import (
     OPENAI_CLEANING_SYSTEM_PROMPT,
     OPENAI_CLEANING_TASK_TEMPLATE,
 )
+from ai_knowledge_pipeline.modules.cleaning.response_parser import (
+    parse_cleaning_response,
+)
 from ai_knowledge_pipeline.modules.cleaning.types import (
     ActionItem,
     AgentMemoryCandidate,
@@ -118,7 +121,6 @@ class DeepSeekCleaningProvider(TranscriptCleaningProvider):
                         "content": _build_user_prompt(request),
                     },
                 ],
-                response_format={"type": "json_object"},
             )
         except Exception as exc:  # pragma: no cover - exact SDK exceptions vary
             return _issue_result(
@@ -129,8 +131,10 @@ class DeepSeekCleaningProvider(TranscriptCleaningProvider):
 
         response_text = _extract_chat_completion_text(response)
         try:
-            payload = json.loads(response_text)
-            markdown_ready = _parse_markdown_ready(payload)
+            parsed = parse_cleaning_response(
+                response_text,
+                default_title=_default_title(request),
+            )
         except (TypeError, ValueError, KeyError) as exc:
             return _issue_result(
                 TranscriptCleaningErrorCode.RESPONSE_PARSE_FAILED,
@@ -139,11 +143,11 @@ class DeepSeekCleaningProvider(TranscriptCleaningProvider):
             )
 
         return CleaningProviderResult(
-            markdown_ready=markdown_ready,
+            markdown_ready=parsed.markdown_ready,
             model_name=model,
             prompt_version=request.config.prompt_version,
             language=request.config.language or request.transcript.language,
-            confidence=_optional_float(payload.get("confidence")),
+            confidence=_optional_float(parsed.payload.get("confidence")),
             metadata={
                 "provider": self.name,
                 "model": model,
@@ -170,6 +174,14 @@ def _build_user_prompt(request: TranscriptCleaningRequest) -> str:
             ),
             OPENAI_CLEANING_JSON_SCHEMA_HINT,
         )
+    )
+
+
+def _default_title(request: TranscriptCleaningRequest) -> str:
+    return (
+        request.transcript.snapshot.metadata.title
+        or request.transcript.source_id
+        or "Untitled Transcript"
     )
 
 

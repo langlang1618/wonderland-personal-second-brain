@@ -150,6 +150,36 @@ def provider_payload() -> dict:
     }
 
 
+def two_section_response(readable_body: str | None = None) -> str:
+    readable = readable_body or (
+        "## 知识流水线背景\n\n"
+        "这个课程讲 RAG、Agent Memory 和 Obsidian。清洗后的转录会进入 Markdown。"
+    )
+    return (
+        "===STRUCTURED_JSON===\n"
+        + json.dumps(
+            {
+                "title": "Two Section DeepSeek Notes",
+                "summary": "两段式输出摘要。",
+                "sections": [
+                    {
+                        "title": "两段式解析",
+                        "summary": "结构化 JSON 与长可读转录分离。",
+                        "content": "JSON 只保留短字段。",
+                    }
+                ],
+                "key_insights": ["长文本不再塞进 JSON 字符串。"],
+                "action_items": ["验证 Markdown 三段输出。"],
+                "semantic_tags": ["deepseek", "two-section"],
+                "confidence": 0.89,
+            },
+            ensure_ascii=False,
+        )
+        + "\n===READABLE_TRANSCRIPT===\n"
+        + readable
+    )
+
+
 class FakeMessage:
     def __init__(self, content: str) -> None:
         self.content = content
@@ -218,8 +248,52 @@ def test_deepseek_provider_parses_mock_chat_completion() -> None:
     assert result.metadata["response_id"] == "deepseek_resp_1"
     call = client.chat.completions.calls[0]
     assert call["model"] == "deepseek-v4-flash"
-    assert call["response_format"] == {"type": "json_object"}
+    assert "response_format" not in call
     assert "这个课程讲 rag" in call["messages"][1]["content"]
+
+
+def test_deepseek_provider_parses_two_section_response() -> None:
+    provider = DeepSeekCleaningProvider(client=FakeDeepSeekClient(two_section_response()))
+    request = TranscriptCleaningRequest(
+        transcript=transcript_artifact(),
+        prompt=prompt(),
+        config=TranscriptCleaningConfig(prompt_version="cleaning-v2", language="zh"),
+    )
+
+    result = provider.clean(request)
+
+    assert result.is_success
+    assert result.markdown_ready is not None
+    assert result.markdown_ready.title == "Two Section DeepSeek Notes"
+    assert result.markdown_ready.cleaned_text.startswith("两段式输出摘要")
+    assert result.markdown_ready.chapters[0].title == "两段式解析"
+    assert result.markdown_ready.chapters[0].blocks[0].text == "JSON 只保留短字段。"
+    assert result.markdown_ready.key_insights[0].text == "长文本不再塞进 JSON 字符串。"
+    assert result.markdown_ready.action_items[0].text == "验证 Markdown 三段输出。"
+    assert result.markdown_ready.semantic_tags == ("deepseek", "two-section")
+    assert result.markdown_ready.readable_transcript_text.startswith("## 知识流水线背景")
+    assert result.confidence == 0.89
+
+
+def test_deepseek_provider_keeps_long_readable_transcript_outside_json() -> None:
+    readable = "## 长转录\n\n" + "\n\n".join(
+        f"第 {index} 段包含引号 \"、换行和金融术语 CPI，不需要 JSON 转义。"
+        for index in range(50)
+    )
+    provider = DeepSeekCleaningProvider(
+        client=FakeDeepSeekClient(two_section_response(readable))
+    )
+    request = TranscriptCleaningRequest(
+        transcript=transcript_artifact(),
+        prompt=prompt(),
+    )
+
+    result = provider.clean(request)
+
+    assert result.is_success
+    assert result.markdown_ready is not None
+    assert result.markdown_ready.readable_transcript_text == readable
+    assert "第 49 段" in result.markdown_ready.readable_transcript_text
 
 
 def test_deepseek_provider_reads_env_defaults_from_dotenv(monkeypatch, tmp_path) -> None:

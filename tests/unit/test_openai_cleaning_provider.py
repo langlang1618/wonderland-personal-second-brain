@@ -157,6 +157,31 @@ def provider_payload() -> dict:
     }
 
 
+def two_section_response() -> str:
+    return (
+        "===STRUCTURED_JSON===\n"
+        + json.dumps(
+            {
+                "title": "Two Section OpenAI Notes",
+                "summary": "Two-section summary.",
+                "sections": [
+                    {
+                        "title": "Separated Output",
+                        "summary": "Structured JSON stays short.",
+                        "content": "Readable transcript is parsed separately.",
+                    }
+                ],
+                "key_insights": ["Readable text does not need JSON escaping."],
+                "action_items": ["Render Markdown."],
+                "semantic_tags": ["openai", "two-section"],
+                "confidence": 0.87,
+            }
+        )
+        + "\n===READABLE_TRANSCRIPT===\n"
+        + "## 可读转录\n\n这里是单独解析的长文本。"
+    )
+
+
 class FakeOpenAIResponse:
     id = "resp_test_1"
 
@@ -213,6 +238,25 @@ def test_openai_provider_parses_mock_responses_output() -> None:
     assert client.responses.calls[0]["model"] == "gpt-5-mini"
     assert "Return valid JSON only" in client.responses.calls[0]["input"][1]["content"]
     assert "helo wrld" in client.responses.calls[0]["input"][1]["content"]
+
+
+def test_openai_provider_parses_two_section_response() -> None:
+    client = FakeOpenAIClient(two_section_response())
+    provider = OpenAICleaningProvider(client=client)
+    request = TranscriptCleaningRequest(
+        transcript=transcript_artifact(),
+        prompt=prompt(),
+        config=TranscriptCleaningConfig(model_name="gpt-5-mini"),
+    )
+
+    result = provider.clean(request)
+
+    assert result.is_success
+    assert result.markdown_ready is not None
+    assert result.markdown_ready.title == "Two Section OpenAI Notes"
+    assert result.markdown_ready.chapters[0].title == "Separated Output"
+    assert result.markdown_ready.cleaned_text.startswith("Two-section summary")
+    assert result.markdown_ready.readable_transcript_text == "## 可读转录\n\n这里是单独解析的长文本。"
 
 
 def test_openai_provider_missing_api_key_returns_structured_issue(monkeypatch, tmp_path) -> None:

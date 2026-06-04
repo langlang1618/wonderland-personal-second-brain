@@ -38,7 +38,7 @@ def test_profile_composition_combines_base_profile_and_existing_prompt() -> None
 
     assert "durable knowledge base" in composed.system_instruction
     assert "Simplified Chinese" in composed.system_instruction
-    assert "readable_transcript_text" in composed.system_instruction
+    assert "===READABLE_TRANSCRIPT===" in composed.system_instruction
     assert "AI engineering and research" in composed.system_instruction
     assert "Existing system instruction." in composed.system_instruction
     assert composed.terminology == ("RAG",)
@@ -70,6 +70,7 @@ def test_finance_profile_composition_applies_terms_to_readable_transcript_prompt
     composed = compose_cleaning_prompt(base_prompt(), profile)
 
     assert "readable_transcript_text" in composed.system_instruction
+    assert "===READABLE_TRANSCRIPT===" in composed.system_instruction
     assert "Finance terminology repair applies both" in composed.system_instruction
     assert "美联储沃什" in composed.terminology
     assert "鲍威尔" in composed.terminology

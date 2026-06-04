@@ -2,8 +2,12 @@
 
 OPENAI_CLEANING_SYSTEM_PROMPT = """\
 You are a production transcript-cleaning engine for an AI knowledge pipeline.
-Return only valid JSON matching the requested schema. Do not include markdown
-fences or explanatory prose outside the JSON object.
+Return exactly two sections:
+===STRUCTURED_JSON===
+===READABLE_TRANSCRIPT===
+
+Do not wrap either section in markdown fences. The first section must contain
+only valid JSON. The second section is plain long-form transcript text.
 """
 
 OPENAI_CLEANING_TASK_TEMPLATE = """\
@@ -28,10 +32,18 @@ Terminology: {terminology}
 Output requirements: {output_requirements}
 Style guide: {style_guide}
 
+Output format:
+===STRUCTURED_JSON===
+Return short structured fields only. Do not put readable_transcript_text in JSON.
+
+===READABLE_TRANSCRIPT===
+Put the long readable transcript here as plain text. This avoids JSON escaping
+and truncation issues for long course transcripts.
+
 Readable transcript constraints:
-- output readable_transcript_text in Simplified Chinese
-- readable_transcript_text is not a summary
-- readable_transcript_text does not replace raw_transcript; the system preserves raw_transcript separately
+- output the readable transcript in Simplified Chinese
+- the readable transcript is not a summary
+- the readable transcript does not replace raw_transcript; the system preserves raw_transcript separately
 - keep the original lecture order and knowledge details
 - do not compress, summarize, rewrite, or reorganize the speaker's logic
 - add Chinese punctuation, natural paragraphs, and section headings
@@ -45,13 +57,14 @@ Raw transcript:
 """
 
 OPENAI_CLEANING_JSON_SCHEMA_HINT = """\
-Return this JSON shape:
+Return this exact two-section shape:
+
+===STRUCTURED_JSON===
 {
   "title": "string",
   "summary": "string",
   "cleaned_text": "string",
-  "readable_transcript_text": "string",
-  "chapters": [
+  "sections": [
     {
       "title": "string",
       "summary": "string",
@@ -75,6 +88,10 @@ Return this JSON shape:
   ],
   "confidence": 0.0
 }
+
+===READABLE_TRANSCRIPT===
+Readable transcript body here. Do not JSON-escape this section. Do not include
+this content inside STRUCTURED_JSON.
 """
 
 __all__ = [

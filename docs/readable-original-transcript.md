@@ -31,10 +31,30 @@ never replaces it.
 The `CleaningProvider` protocol is unchanged. Providers still return
 `CleaningProviderResult`.
 
-OpenAI-compatible providers parse `readable_transcript_text` from provider JSON
-output. If an older provider response omits the field, the pipeline remains
-compatible: Markdown skips `# 可读转录` and still emits `# 原始逐字稿` from
-`raw_transcript`.
+OpenAI-compatible providers prefer a two-section response:
+
+```text
+===STRUCTURED_JSON===
+{
+  "summary": "...",
+  "sections": [],
+  "key_insights": [],
+  "action_items": [],
+  "semantic_tags": [],
+  "cleaned_text": "..."
+}
+
+===READABLE_TRANSCRIPT===
+Readable transcript body here.
+```
+
+`STRUCTURED_JSON` carries short structured fields only. The long readable
+transcript is parsed from `READABLE_TRANSCRIPT`, so it does not need to be
+JSON-escaped and is less likely to truncate provider JSON.
+
+Legacy JSON responses with `readable_transcript_text` are still supported. If a
+provider response omits the readable transcript, Markdown skips `# 可读转录` and
+still emits `# 原始逐字稿` from `raw_transcript`.
 
 ## Prompt Constraints
 
