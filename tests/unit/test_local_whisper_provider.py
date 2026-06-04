@@ -178,5 +178,6 @@ def test_local_whisper_demo_pipeline_writes_note_from_srt(tmp_path) -> None:
     assert result.artifacts.transcript.text == "Local Whisper transcript import works."
     assert result.artifacts.transcript.snapshot.metadata.extra["source_format"] == "srt"
     markdown = result.obsidian_note_path.read_text(encoding="utf-8")
-    assert "# AI Knowledge Pipeline Demo" in markdown
+    assert "# AI整理部分" in markdown
+    assert "## AI Knowledge Pipeline Demo" in markdown
     assert "## Summary" in markdown

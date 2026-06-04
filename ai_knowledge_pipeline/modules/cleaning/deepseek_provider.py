@@ -220,6 +220,7 @@ def _parse_markdown_ready(payload: dict[str, Any]) -> MarkdownReadyTranscript:
         title=str(payload["title"]),
         summary=str(payload["summary"]),
         cleaned_text=str(payload["cleaned_text"]),
+        readable_transcript_text=str(payload.get("readable_transcript_text", "")),
         chapters=tuple(
             _parse_chapter(item, index)
             for index, item in enumerate(payload.get("chapters", ()))

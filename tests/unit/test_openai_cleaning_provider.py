@@ -107,6 +107,10 @@ def provider_payload() -> dict:
             "Hello world. This lesson explains how clean transcripts support "
             "RAG, Markdown generation, and agent memory."
         ),
+        "readable_transcript_text": (
+            "## 课程导入\n\n"
+            "你好，世界。本节课解释干净的转录如何支持 RAG、Markdown 生成和 Agent Memory。"
+        ),
         "chapters": [
             {
                 "title": "Pipeline Overview",
@@ -194,6 +198,7 @@ def test_openai_provider_parses_mock_responses_output() -> None:
     assert result.markdown_ready is not None
     assert result.markdown_ready.title == "AI Knowledge Pipeline Foundations"
     assert result.markdown_ready.summary.startswith("A cleaned summary")
+    assert result.markdown_ready.readable_transcript_text.startswith("## 课程导入")
     assert result.markdown_ready.chapters[0].title == "Pipeline Overview"
     assert result.markdown_ready.chapters[0].blocks[1].text.startswith("Normalize")
     assert result.markdown_ready.key_insights[0].tags == ("rag",)
@@ -309,10 +314,13 @@ def test_openai_cleaning_output_flows_to_markdown_and_obsidian(tmp_path) -> None
     assert write_result.note is not None
     note_text = write_result.note.path.read_text(encoding="utf-8")
     assert "# AI Knowledge Pipeline Foundations" in note_text
+    assert "# AI整理部分" in note_text
     assert "## Summary" in note_text
     assert "## Key Insights" in note_text
     assert "## Action Items" in note_text
     assert "#rag #obsidian #agent-memory" in note_text
+    assert "# 原始转录" in note_text
+    assert "你好，世界。" in note_text
     assert write_result.note.snapshot.lineage.upstream_artifact_ids == (
         markdown_result.markdown.markdown_artifact_id,
     )

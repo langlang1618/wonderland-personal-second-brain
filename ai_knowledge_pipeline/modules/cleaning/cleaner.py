@@ -170,6 +170,7 @@ class DefaultTranscriptCleaner(TranscriptCleaner):
                 "prompt_version": prompt_version,
             },
             raw_transcript=transcript.text,
+            readable_transcript_text=markdown_ready.readable_transcript_text,
         )
 
 

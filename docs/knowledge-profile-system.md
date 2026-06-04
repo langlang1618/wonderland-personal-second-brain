@@ -65,10 +65,13 @@ venv/bin/python scripts/run_real_course_pipeline.py \
 ## Original Transcript Preservation
 
 `CleanedTranscriptArtifact` preserves the complete raw transcript as
-`raw_transcript`. Markdown rendering appends:
+`raw_transcript`, and can also carry `readable_transcript_text`. Markdown
+rendering appends:
 
 ```markdown
 # 原始转录
 ```
 
 This retains the source transcript for auditability and later regeneration.
+When `readable_transcript_text` exists, it is used for `# 原始转录`; otherwise
+Markdown falls back to the raw transcript.

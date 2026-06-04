@@ -22,7 +22,8 @@ def test_local_audio_demo_pipeline_writes_obsidian_note(tmp_path) -> None:
     assert result.artifacts.obsidian_note.status is ObsidianWriteStatus.WRITTEN
 
     markdown = result.obsidian_note_path.read_text(encoding="utf-8")
-    assert "# AI Knowledge Pipeline Demo" in markdown
+    assert "# AI整理部分" in markdown
+    assert "## AI Knowledge Pipeline Demo" in markdown
     assert "## Summary" in markdown
     assert "A local demo showing how audio flows" in markdown
     assert "## Chapters" in markdown

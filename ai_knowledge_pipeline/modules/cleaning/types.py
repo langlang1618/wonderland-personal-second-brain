@@ -123,6 +123,7 @@ class MarkdownReadyTranscript:
     title: str
     summary: str
     cleaned_text: str
+    readable_transcript_text: str = ""
     chapters: tuple[MarkdownReadyChapter, ...] = ()
     key_insights: tuple[KeyInsight, ...] = ()
     action_items: tuple[ActionItem, ...] = ()
@@ -196,6 +197,7 @@ class CleanedTranscriptArtifact:
     snapshot: ArtifactSnapshot
     metadata: MetadataMap = field(default_factory=dict)
     raw_transcript: str = ""
+    readable_transcript_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)

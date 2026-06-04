@@ -79,7 +79,7 @@ def _frontmatter(request: MarkdownGenerationRequest) -> YamlFrontmatter:
 
 def _body(request: MarkdownGenerationRequest) -> str:
     ready = request.cleaned_transcript.markdown_ready
-    lines: list[str] = [f"# {ready.title}", ""]
+    lines: list[str] = ["# AI整理部分", "", f"## {ready.title}", ""]
 
     if request.config.include_summary:
         lines.extend(("## Summary", "", ready.summary, ""))
@@ -125,12 +125,17 @@ def _body(request: MarkdownGenerationRequest) -> str:
         lines.append("")
 
     lines.extend(("## Clean Transcript", "", ready.cleaned_text, ""))
-    if request.cleaned_transcript.raw_transcript.strip():
+    original_transcript = (
+        request.cleaned_transcript.readable_transcript_text
+        or ready.readable_transcript_text
+        or request.cleaned_transcript.raw_transcript
+    )
+    if original_transcript.strip():
         lines.extend(
             (
                 "# 原始转录",
                 "",
-                request.cleaned_transcript.raw_transcript,
+                original_transcript,
                 "",
             )
         )

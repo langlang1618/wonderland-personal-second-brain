@@ -29,6 +29,10 @@ class MockDeepSeekProvider:
                 title="第一节真实课程",
                 summary="这是第一节课程的结构化摘要。",
                 cleaned_text="课程介绍了 AI Knowledge Pipeline 的本地优先处理链路。",
+                readable_transcript_text=(
+                    "## 本地优先链路\n\n"
+                    "今天我们讲 AI Knowledge Pipeline 和 Obsidian。"
+                ),
                 chapters=(
                     MarkdownReadyChapter(
                         chapter_index=0,
@@ -111,7 +115,8 @@ def test_real_course_pipeline_generates_obsidian_note(tmp_path) -> None:
 
     assert result.obsidian_note_path.exists()
     note_text = result.obsidian_note_path.read_text(encoding="utf-8")
-    assert "# 第一节真实课程" in note_text
+    assert "# AI整理部分" in note_text
+    assert "## 第一节真实课程" in note_text
     assert "## Summary" in note_text
     assert "这是第一节课程的结构化摘要。" in note_text
     assert "## Chapters" in note_text

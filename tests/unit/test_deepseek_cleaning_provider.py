@@ -104,6 +104,10 @@ def provider_payload() -> dict:
         "title": "AI Knowledge Pipeline DeepSeek Notes",
         "summary": "本节说明如何把清洗后的转录接入 Markdown 和 Obsidian。",
         "cleaned_text": "课程介绍了 RAG、Agent Memory 与 Obsidian 知识库流水线。",
+        "readable_transcript_text": (
+            "## 知识流水线背景\n\n"
+            "这个课程讲 RAG、Agent Memory 和 Obsidian。清洗后的转录会进入 Markdown。"
+        ),
         "chapters": [
             {
                 "title": "知识流水线",
@@ -202,6 +206,7 @@ def test_deepseek_provider_parses_mock_chat_completion() -> None:
     assert result.markdown_ready is not None
     assert result.markdown_ready.title == "AI Knowledge Pipeline DeepSeek Notes"
     assert result.markdown_ready.chapters[0].title == "知识流水线"
+    assert result.markdown_ready.readable_transcript_text.startswith("## 知识流水线背景")
     assert result.markdown_ready.key_insights[0].tags == ("provider-boundary",)
     assert result.markdown_ready.action_items[0].text.startswith("验证 DeepSeek")
     assert result.markdown_ready.semantic_tags == ("deepseek", "rag", "obsidian")
@@ -349,10 +354,13 @@ def test_deepseek_cleaning_output_flows_to_markdown_and_obsidian(tmp_path) -> No
     assert write_result.note is not None
     note_text = write_result.note.path.read_text(encoding="utf-8")
     assert "# AI Knowledge Pipeline DeepSeek Notes" in note_text
+    assert "# AI整理部分" in note_text
     assert "## Summary" in note_text
     assert "## Key Insights" in note_text
     assert "## Action Items" in note_text
     assert "#deepseek #rag #obsidian" in note_text
+    assert "# 原始转录" in note_text
+    assert "这个课程讲 RAG、Agent Memory 和 Obsidian。" in note_text
     assert write_result.note.snapshot.lineage.upstream_artifact_ids == (
         markdown_result.markdown.markdown_artifact_id,
     )
