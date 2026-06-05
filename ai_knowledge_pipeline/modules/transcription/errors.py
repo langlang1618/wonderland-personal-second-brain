@@ -18,6 +18,9 @@ class TranscriptionErrorCode(StrEnum):
     MISSING_TRANSCRIPT_FILE = "missing_transcript_file"
     UNSUPPORTED_TRANSCRIPT_FORMAT = "unsupported_transcript_format"
     TRANSCRIPT_PARSE_FAILED = "transcript_parse_failed"
+    MODEL_UNAVAILABLE = "model_unavailable"
+    MODEL_LOAD_FAILED = "model_load_failed"
+    AUDIO_TRANSCRIPTION_FAILED = "audio_transcription_failed"
 
 
 class TranscriptionIssueSeverity(StrEnum):
