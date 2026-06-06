@@ -27,3 +27,11 @@ data/*
 !data/obsidian/.gitkeep
 !data/tmp/
 !data/tmp/.gitkeep
+
+# Generated transcript outputs
+data/transcripts/*
+!data/transcripts/.gitkeep
+!data/transcripts/raw/
+!data/transcripts/raw/.gitkeep
+!data/transcripts/cleaned/
+!data/transcripts/cleaned/.gitkeep
