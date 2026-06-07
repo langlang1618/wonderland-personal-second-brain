@@ -35,3 +35,6 @@ data/transcripts/*
 !data/transcripts/raw/.gitkeep
 !data/transcripts/cleaned/
 !data/transcripts/cleaned/.gitkeep
+
+# Accidental local Obsidian output when OBSIDIAN_VAULT_PATH is empty
+AI Knowledge Pipeline/
