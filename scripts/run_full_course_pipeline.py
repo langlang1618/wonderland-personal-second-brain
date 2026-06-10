@@ -55,6 +55,16 @@ class FullCourseSourceType(StrEnum):
     LOCAL_VIDEO = "local-video"
 
 
+class CleanupSelection(StrEnum):
+    """User-facing cleanup selections for generated media artifacts."""
+
+    NONE = "none"
+    RAW = "raw"
+    CHUNKS = "chunks"
+    RAW_CHUNKS = "raw,chunks"
+    ALL_MEDIA = "all-media"
+
+
 @dataclass(frozen=True, slots=True)
 class FullCoursePipelineRequest:
     """Input for the single-source full auto pipeline."""
@@ -74,6 +84,26 @@ class FullCoursePipelineRequest:
     skip_existing: bool = False
     dry_run: bool = False
     env_path: Path = Path(".env")
+    cleanup: str = CleanupSelection.NONE.value
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupPolicy:
+    """Normalized cleanup policy."""
+
+    value: str
+    remove_raw: bool = False
+    remove_chunks: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupResult:
+    """Cleanup outcome after a successful full pipeline run."""
+
+    policy: CleanupPolicy
+    removed: tuple[Path, ...] = ()
+    skipped: tuple[str, ...] = ()
+    plan: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +118,10 @@ class FullCoursePipelineResult:
     transcript_dir: Path | None
     merged_transcript_path: Path | None
     obsidian_note_path: Path | None
+    cleanup: str = CleanupSelection.NONE.value
+    cleanup_removed: tuple[Path, ...] = ()
+    cleanup_skipped: tuple[str, ...] = ()
+    cleanup_plan: tuple[str, ...] = ()
     dry_run: bool = False
 
 
@@ -137,6 +171,7 @@ def run_full_course_pipeline(
 
     resolved_type = _resolve_source_type(request.source, request.source_type)
     title = _resolve_title(request.source, request.title)
+    cleanup_policy = _parse_cleanup(request.cleanup)
     if resolved_type in {FullCourseSourceType.M3U8, FullCourseSourceType.WEBPAGE}:
         media_result = media_ingestion_runner(
             MediaIngestionRequest(
@@ -171,6 +206,12 @@ def run_full_course_pipeline(
 
     transcript_dir = _transcript_dir(request, title)
     if request.dry_run:
+        cleanup_result = _cleanup_plan(
+            policy=cleanup_policy,
+            course_dir=course_dir,
+            raw_audio_path=raw_audio_path,
+            chunks_dir=chunks_dir,
+        )
         return FullCoursePipelineResult(
             title=title,
             source_type=resolved_type,
@@ -180,6 +221,8 @@ def run_full_course_pipeline(
             transcript_dir=transcript_dir,
             merged_transcript_path=transcript_dir / "merged_transcript.txt",
             obsidian_note_path=None,
+            cleanup=cleanup_policy.value,
+            cleanup_plan=cleanup_result.plan,
             dry_run=True,
         )
 
@@ -224,6 +267,12 @@ def run_full_course_pipeline(
     except RealCoursePipelineError as exc:
         raise FullCoursePipelineError(f"Transcript-to-Obsidian failed: {exc}") from exc
 
+    cleanup_result = _run_cleanup(
+        policy=cleanup_policy,
+        course_dir=course_dir,
+        raw_audio_path=raw_audio_path,
+        chunks_dir=chunks_dir,
+    )
     return FullCoursePipelineResult(
         title=title,
         source_type=resolved_type,
@@ -233,6 +282,9 @@ def run_full_course_pipeline(
         transcript_dir=transcript_dir,
         merged_transcript_path=merged_path,
         obsidian_note_path=course_result.obsidian_note_path,
+        cleanup=cleanup_result.policy.value,
+        cleanup_removed=cleanup_result.removed,
+        cleanup_skipped=cleanup_result.skipped,
     )
 
 
@@ -260,6 +312,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         model=model,
         skip_existing=args.skip_existing,
         dry_run=args.dry_run,
+        cleanup=args.cleanup,
     )
     try:
         result = run_full_course_pipeline(request)
@@ -301,7 +354,24 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--model", help="DeepSeek model. Defaults to DEEPSEEK_MODEL.")
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--cleanup",
+        type=_cleanup_arg,
+        default=CleanupSelection.NONE.value,
+        metavar="POLICY",
+        help="Cleanup generated media artifacts after a successful run.",
+    )
     return parser.parse_args(argv)
+
+
+def _cleanup_arg(value: str) -> str:
+    try:
+        CleanupSelection(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "cleanup must be one of: none, raw, chunks, raw,chunks, all-media"
+        ) from exc
+    return value
 
 
 def _single_media_item(media_result: MediaIngestionBatchResult):
@@ -482,6 +552,130 @@ def _chunk_paths(chunks_dir: Path) -> tuple[Path, ...]:
     return tuple(sorted(chunks_dir.glob(f"chunk_*.{OUTPUT_AUDIO_FORMAT}")))
 
 
+def _parse_cleanup(value: str) -> CleanupPolicy:
+    try:
+        selection = CleanupSelection(value)
+    except ValueError as exc:
+        raise FullCoursePipelineError(
+            "Invalid cleanup policy. Use one of: "
+            f"{', '.join(selection.value for selection in CleanupSelection)}"
+        ) from exc
+    if selection is CleanupSelection.NONE:
+        return CleanupPolicy(value=selection.value)
+    if selection is CleanupSelection.RAW:
+        return CleanupPolicy(value=selection.value, remove_raw=True)
+    if selection is CleanupSelection.CHUNKS:
+        return CleanupPolicy(value=selection.value, remove_chunks=True)
+    return CleanupPolicy(value=selection.value, remove_raw=True, remove_chunks=True)
+
+
+def _cleanup_plan(
+    *,
+    policy: CleanupPolicy,
+    course_dir: Path,
+    raw_audio_path: Path | None,
+    chunks_dir: Path | None,
+) -> CleanupResult:
+    plan: list[str] = []
+    if policy.remove_raw and raw_audio_path is not None:
+        plan.append(f"would remove {_raw_audio_dir(course_dir, raw_audio_path)}")
+    if policy.remove_chunks and chunks_dir is not None:
+        plan.append(f"would remove {chunks_dir}")
+    return CleanupResult(policy=policy, plan=tuple(plan))
+
+
+def _run_cleanup(
+    *,
+    policy: CleanupPolicy,
+    course_dir: Path,
+    raw_audio_path: Path | None,
+    chunks_dir: Path | None,
+) -> CleanupResult:
+    removed: list[Path] = []
+    skipped: list[str] = []
+    if policy.remove_raw:
+        if raw_audio_path is None:
+            skipped.append("raw_audio: no raw audio path")
+        else:
+            _remove_generated_media_path(
+                course_dir=course_dir,
+                target=_raw_audio_dir(course_dir, raw_audio_path),
+                expected_name="raw_audio",
+                removed=removed,
+                skipped=skipped,
+            )
+    if policy.remove_chunks:
+        if chunks_dir is None:
+            skipped.append("chunks: no chunks path")
+        else:
+            _remove_generated_media_path(
+                course_dir=course_dir,
+                target=chunks_dir,
+                expected_name="chunks",
+                removed=removed,
+                skipped=skipped,
+            )
+    return CleanupResult(
+        policy=policy,
+        removed=tuple(removed),
+        skipped=tuple(skipped),
+    )
+
+
+def _remove_generated_media_path(
+    *,
+    course_dir: Path,
+    target: Path,
+    expected_name: str,
+    removed: list[Path],
+    skipped: list[str],
+) -> None:
+    if target.name != expected_name:
+        raise FullCoursePipelineError(
+            f"Cleanup refused unsafe target name: {target}"
+        )
+    if not _is_safe_child_path(course_dir, target):
+        raise FullCoursePipelineError(
+            f"Cleanup refused path outside course_dir: {target}"
+        )
+    if not target.exists():
+        skipped.append(f"{expected_name}: path does not exist")
+        return
+    try:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+    except OSError as exc:
+        raise FullCoursePipelineError(f"Cleanup failed for {target}: {exc}") from exc
+    removed.append(target)
+
+
+def _raw_audio_dir(course_dir: Path, raw_audio_path: Path) -> Path:
+    raw_audio_dir = raw_audio_path.parent
+    expected = course_dir / "raw_audio"
+    return raw_audio_dir if raw_audio_dir == expected else expected
+
+
+def _is_safe_child_path(parent: Path, child: Path) -> bool:
+    try:
+        parent_resolved = parent.resolve()
+        child_resolved = child.resolve()
+    except OSError:
+        return False
+    if parent_resolved == child_resolved:
+        return False
+    if child_resolved.anchor == str(child_resolved):
+        return False
+    forbidden = {
+        Path.home().resolve(),
+        Path.cwd().resolve(),
+    }
+    if child_resolved in forbidden:
+        return False
+    return parent_resolved in child_resolved.parents
+
+
 def _resolve_source_type(
     source: str,
     requested_type: FullCourseSourceType,
@@ -549,6 +743,23 @@ def _print_result(result: FullCoursePipelineResult) -> None:
     print(f"transcript_dir: {result.transcript_dir}")
     print(f"merged_transcript_path: {result.merged_transcript_path}")
     print(f"obsidian_note_path: {result.obsidian_note_path}")
+    print(f"cleanup: {result.cleanup}")
+    if result.dry_run and result.cleanup_plan:
+        print("cleanup_plan:")
+        for item in result.cleanup_plan:
+            print(f"  - {item}")
+    elif result.cleanup_removed:
+        print("cleanup_removed:")
+        for path in result.cleanup_removed:
+            print(f"  - {path}")
+    else:
+        print("cleanup_removed: []")
+    if result.cleanup_skipped:
+        print("cleanup_skipped:")
+        for item in result.cleanup_skipped:
+            print(f"  - {item}")
+    else:
+        print("cleanup_skipped: []")
 
 
 def _display_source(source: str, limit: int = 90) -> str:
