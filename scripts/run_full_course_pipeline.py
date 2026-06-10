@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Protocol, Sequence
 from urllib.parse import urlparse
 
+from ai_knowledge_pipeline.modules.chunking.runner import SubprocessFfmpegRunner
+from ai_knowledge_pipeline.modules.chunking.types import (
+    ChunkCommand,
+    ChunkProcessResult,
+    MediaChunkingConfig,
+)
 from ai_knowledge_pipeline.modules.cleaning import KnowledgeProfileName
 from ai_knowledge_pipeline.modules.transcription import FasterWhisperModelSize
 from scripts.run_local_whisper_transcription import (
@@ -76,6 +83,7 @@ class FullCoursePipelineResult:
     title: str
     source_type: FullCourseSourceType
     course_dir: Path | None
+    raw_audio_path: Path | None
     chunks_dir: Path | None
     transcript_dir: Path | None
     merged_transcript_path: Path | None
@@ -92,39 +100,74 @@ WhisperRunner = Callable[[LocalWhisperRuntimeRequest], LocalWhisperRuntimeResult
 CourseRunner = Callable[[RealCoursePipelineRequest], RealCoursePipelineResult]
 
 
+class FfmpegRunner(Protocol):
+    """Minimal ffmpeg runner protocol used by the full runner local-ingestion path."""
+
+    def run(
+        self,
+        command: ChunkCommand,
+        config: MediaChunkingConfig,
+    ) -> ChunkProcessResult: ...
+
+
+@dataclass(frozen=True, slots=True)
+class LocalMediaIngestionResult:
+    """Filesystem result for local audio/video ingestion."""
+
+    course_dir: Path
+    raw_audio_path: Path
+    chunks_dir: Path
+    chunk_paths: tuple[Path, ...] = ()
+
+
+SUPPORTED_AUDIO_SUFFIXES = {".mp3", ".m4a", ".wav", ".aac", ".flac"}
+SUPPORTED_VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm"}
+OUTPUT_AUDIO_FORMAT = "mp3"
+
+
 def run_full_course_pipeline(
     request: FullCoursePipelineRequest,
     *,
     media_ingestion_runner: MediaIngestionRunner = run_media_ingestion,
     whisper_runner: WhisperRunner = run_local_whisper_transcription,
     course_runner: CourseRunner = run_real_course_pipeline,
+    ffmpeg_runner: FfmpegRunner | None = None,
 ) -> FullCoursePipelineResult:
     """Run one URL-like source through the complete local-first course pipeline."""
 
     resolved_type = _resolve_source_type(request.source, request.source_type)
     title = _resolve_title(request.source, request.title)
-    if resolved_type not in {FullCourseSourceType.M3U8, FullCourseSourceType.WEBPAGE}:
-        raise FullCoursePipelineError(
-            f"Source type '{resolved_type.value}' is reserved for a later stage."
+    if resolved_type in {FullCourseSourceType.M3U8, FullCourseSourceType.WEBPAGE}:
+        media_result = media_ingestion_runner(
+            MediaIngestionRequest(
+                urls=(request.source,),
+                output_dir=request.output_dir,
+                title=title,
+                chunk_minutes=request.chunk_minutes,
+                dry_run=request.dry_run,
+                skip_existing=request.skip_existing,
+            )
         )
-
-    media_result = media_ingestion_runner(
-        MediaIngestionRequest(
-            urls=(request.source,),
-            output_dir=request.output_dir,
+        media_item = _single_media_item(media_result)
+        course_dir = media_item.plan.course_dir
+        raw_audio_path = media_item.plan.downloaded_audio_path
+        chunks_dir = media_item.plan.chunks_dir
+        chunk_paths = media_item.chunk_paths
+        if media_item.status is MediaIngestionStatus.FAILED:
+            raise FullCoursePipelineError(
+                f"Media ingestion failed: {'; '.join(media_item.errors) or 'unknown error'}"
+            )
+    else:
+        local_result = _run_local_media_ingestion(
+            request,
             title=title,
-            chunk_minutes=request.chunk_minutes,
-            dry_run=request.dry_run,
-            skip_existing=request.skip_existing,
+            source_type=resolved_type,
+            ffmpeg_runner=ffmpeg_runner or SubprocessFfmpegRunner(),
         )
-    )
-    media_item = _single_media_item(media_result)
-    course_dir = media_item.plan.course_dir
-    chunks_dir = media_item.plan.chunks_dir
-    if media_item.status is MediaIngestionStatus.FAILED:
-        raise FullCoursePipelineError(
-            f"Media ingestion failed: {'; '.join(media_item.errors) or 'unknown error'}"
-        )
+        course_dir = local_result.course_dir
+        raw_audio_path = local_result.raw_audio_path
+        chunks_dir = local_result.chunks_dir
+        chunk_paths = local_result.chunk_paths
 
     transcript_dir = _transcript_dir(request, title)
     if request.dry_run:
@@ -132,6 +175,7 @@ def run_full_course_pipeline(
             title=title,
             source_type=resolved_type,
             course_dir=course_dir,
+            raw_audio_path=raw_audio_path,
             chunks_dir=chunks_dir,
             transcript_dir=transcript_dir,
             merged_transcript_path=transcript_dir / "merged_transcript.txt",
@@ -139,7 +183,7 @@ def run_full_course_pipeline(
             dry_run=True,
         )
 
-    if not media_item.chunk_paths:
+    if not chunk_paths:
         raise FullCoursePipelineError(f"No audio chunks were produced in: {chunks_dir}")
 
     try:
@@ -184,6 +228,7 @@ def run_full_course_pipeline(
         title=title,
         source_type=resolved_type,
         course_dir=course_dir,
+        raw_audio_path=raw_audio_path,
         chunks_dir=chunks_dir,
         transcript_dir=transcript_dir,
         merged_transcript_path=merged_path,
@@ -268,6 +313,175 @@ def _single_media_item(media_result: MediaIngestionBatchResult):
     return item
 
 
+def _run_local_media_ingestion(
+    request: FullCoursePipelineRequest,
+    *,
+    title: str,
+    source_type: FullCourseSourceType,
+    ffmpeg_runner: FfmpegRunner,
+) -> LocalMediaIngestionResult:
+    source_path = Path(request.source).expanduser()
+    _validate_local_source(source_path, source_type)
+    course_dir = request.output_dir / _slugify(title)
+    raw_audio_dir = course_dir / "raw_audio"
+    chunks_dir = course_dir / "chunks"
+    raw_audio_path = (
+        raw_audio_dir / f"course{source_path.suffix.lower()}"
+        if source_type is FullCourseSourceType.LOCAL_AUDIO
+        else raw_audio_dir / f"course.{OUTPUT_AUDIO_FORMAT}"
+    )
+
+    if request.dry_run:
+        return LocalMediaIngestionResult(
+            course_dir=course_dir,
+            raw_audio_path=raw_audio_path,
+            chunks_dir=chunks_dir,
+        )
+
+    if request.skip_existing and raw_audio_path.exists():
+        existing_chunks = _chunk_paths(chunks_dir)
+        if existing_chunks:
+            return LocalMediaIngestionResult(
+                course_dir=course_dir,
+                raw_audio_path=raw_audio_path,
+                chunks_dir=chunks_dir,
+                chunk_paths=existing_chunks,
+            )
+
+    raw_audio_dir.mkdir(parents=True, exist_ok=True)
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    if source_type is FullCourseSourceType.LOCAL_AUDIO:
+        _copy_or_normalize_local_audio(
+            source_path=source_path,
+            raw_audio_path=raw_audio_path,
+            skip_existing=request.skip_existing,
+        )
+    else:
+        _extract_audio_from_local_video(
+            source_path=source_path,
+            raw_audio_path=raw_audio_path,
+            ffmpeg_runner=ffmpeg_runner,
+            skip_existing=request.skip_existing,
+        )
+
+    chunk_paths = _chunk_local_audio(
+        raw_audio_path=raw_audio_path,
+        chunks_dir=chunks_dir,
+        chunk_minutes=request.chunk_minutes,
+        ffmpeg_runner=ffmpeg_runner,
+        skip_existing=request.skip_existing,
+    )
+    return LocalMediaIngestionResult(
+        course_dir=course_dir,
+        raw_audio_path=raw_audio_path,
+        chunks_dir=chunks_dir,
+        chunk_paths=chunk_paths,
+    )
+
+
+def _validate_local_source(source_path: Path, source_type: FullCourseSourceType) -> None:
+    if not source_path.exists():
+        raise FullCoursePipelineError(f"local source does not exist: {source_path}")
+    if not source_path.is_file():
+        raise FullCoursePipelineError(f"local source is not a file: {source_path}")
+    suffix = source_path.suffix.lower()
+    if source_type is FullCourseSourceType.LOCAL_AUDIO and suffix not in SUPPORTED_AUDIO_SUFFIXES:
+        raise FullCoursePipelineError(
+            f"Unsupported local-audio extension: {suffix or '<none>'}. "
+            f"Supported: {', '.join(sorted(SUPPORTED_AUDIO_SUFFIXES))}"
+        )
+    if source_type is FullCourseSourceType.LOCAL_VIDEO and suffix not in SUPPORTED_VIDEO_SUFFIXES:
+        raise FullCoursePipelineError(
+            f"Unsupported local-video extension: {suffix or '<none>'}. "
+            f"Supported: {', '.join(sorted(SUPPORTED_VIDEO_SUFFIXES))}"
+        )
+
+
+def _copy_or_normalize_local_audio(
+    *,
+    source_path: Path,
+    raw_audio_path: Path,
+    skip_existing: bool,
+) -> None:
+    if skip_existing and raw_audio_path.exists():
+        return
+    if source_path.resolve() == raw_audio_path.resolve():
+        return
+    shutil.copy2(source_path, raw_audio_path)
+
+
+def _extract_audio_from_local_video(
+    *,
+    source_path: Path,
+    raw_audio_path: Path,
+    ffmpeg_runner: FfmpegRunner,
+    skip_existing: bool,
+) -> None:
+    if skip_existing and raw_audio_path.exists():
+        return
+    command = (
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(source_path),
+        "-vn",
+        "-codec:a",
+        "libmp3lame",
+        str(raw_audio_path),
+    )
+    result = ffmpeg_runner.run(command, MediaChunkingConfig(ffmpeg_binary=command[0]))
+    if result.returncode != 0:
+        raise FullCoursePipelineError(
+            f"ffmpeg audio extraction failed: {_excerpt(result.output.stderr)}"
+        )
+
+
+def _chunk_local_audio(
+    *,
+    raw_audio_path: Path,
+    chunks_dir: Path,
+    chunk_minutes: int,
+    ffmpeg_runner: FfmpegRunner,
+    skip_existing: bool,
+) -> tuple[Path, ...]:
+    if skip_existing:
+        existing_chunks = _chunk_paths(chunks_dir)
+        if existing_chunks:
+            return existing_chunks
+    chunk_pattern = chunks_dir / f"chunk_%03d.{OUTPUT_AUDIO_FORMAT}"
+    command = (
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(raw_audio_path),
+        "-f",
+        "segment",
+        "-segment_time",
+        str(chunk_minutes * 60),
+        "-segment_start_number",
+        "1",
+        "-vn",
+        "-codec:a",
+        "libmp3lame",
+        str(chunk_pattern),
+    )
+    result = ffmpeg_runner.run(command, MediaChunkingConfig(ffmpeg_binary=command[0]))
+    if result.returncode != 0:
+        raise FullCoursePipelineError(
+            f"ffmpeg chunking failed: {_excerpt(result.output.stderr)}"
+        )
+    chunk_paths = _chunk_paths(chunks_dir)
+    if not chunk_paths:
+        raise FullCoursePipelineError(f"No audio chunks were produced in: {chunks_dir}")
+    return chunk_paths
+
+
+def _chunk_paths(chunks_dir: Path) -> tuple[Path, ...]:
+    if not chunks_dir.exists():
+        return ()
+    return tuple(sorted(chunks_dir.glob(f"chunk_*.{OUTPUT_AUDIO_FORMAT}")))
+
+
 def _resolve_source_type(
     source: str,
     requested_type: FullCourseSourceType,
@@ -278,9 +492,9 @@ def _resolve_source_type(
     if parsed.scheme in {"http", "https"}:
         return FullCourseSourceType.M3U8 if parsed.path.lower().endswith(".m3u8") else FullCourseSourceType.WEBPAGE
     path = Path(source)
-    if path.suffix.lower() in {".mp3", ".m4a", ".wav", ".aac", ".flac"}:
+    if path.suffix.lower() in SUPPORTED_AUDIO_SUFFIXES:
         return FullCourseSourceType.LOCAL_AUDIO
-    if path.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}:
+    if path.suffix.lower() in SUPPORTED_VIDEO_SUFFIXES:
         return FullCourseSourceType.LOCAL_VIDEO
     raise FullCoursePipelineError(f"Unable to detect source type for: {_display_source(source)}")
 
@@ -302,7 +516,12 @@ def _resolve_title(source: str, title: str | None) -> str:
 def _transcript_dir(request: FullCoursePipelineRequest, title: str) -> Path:
     if request.transcript_output_dir is not None:
         return request.transcript_output_dir
-    return Path("data/transcripts") / f"{_slugify(title)}-{request.model_size.value}"
+    model_size = (
+        request.model_size.value
+        if isinstance(request.model_size, FasterWhisperModelSize)
+        else str(request.model_size)
+    )
+    return Path("data/transcripts") / f"{_slugify(title)}-{model_size}"
 
 
 def _resolve_vault_path(request: FullCoursePipelineRequest) -> Path:
@@ -325,6 +544,7 @@ def _print_result(result: FullCoursePipelineResult) -> None:
     print(f"title: {result.title}")
     print(f"source_type: {result.source_type.value}")
     print(f"course_dir: {result.course_dir}")
+    print(f"raw_audio_path: {result.raw_audio_path}")
     print(f"chunks_dir: {result.chunks_dir}")
     print(f"transcript_dir: {result.transcript_dir}")
     print(f"merged_transcript_path: {result.merged_transcript_path}")
@@ -340,6 +560,10 @@ def _display_source(source: str, limit: int = 90) -> str:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fff]+", "-", value.strip()).strip("-")
     return slug.lower() or "course"
+
+
+def _excerpt(text: str, limit: int = 500) -> str:
+    return text[-limit:] if len(text) > limit else text
 
 
 if __name__ == "__main__":

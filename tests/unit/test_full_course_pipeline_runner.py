@@ -4,6 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from ai_knowledge_pipeline.modules.chunking.types import (
+    ChunkProcessOutput,
+    ChunkProcessResult,
+)
 from scripts.run_full_course_pipeline import (
     FullCoursePipelineError,
     FullCoursePipelineRequest,
@@ -19,6 +23,39 @@ from scripts.run_media_ingestion import (
     MediaIngestionPlan,
     MediaIngestionStatus,
 )
+
+
+class FakeFfmpegRunner:
+    def __init__(self) -> None:
+        self.commands: list[tuple[str, ...]] = []
+
+    def run(self, command, config):
+        self.commands.append(command)
+        output_path = Path(command[-1])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if "%" in output_path.name:
+            for index in (1, 2):
+                (output_path.parent / f"chunk_{index:03d}.mp3").write_text(
+                    f"chunk {index}",
+                    encoding="utf-8",
+                )
+        else:
+            output_path.write_text("audio", encoding="utf-8")
+        return ChunkProcessResult(
+            command=command,
+            returncode=0,
+            output=ChunkProcessOutput(stdout="ok"),
+            output_path=output_path,
+        )
+
+
+class FailingFfmpegRunner:
+    def run(self, command, config):
+        return ChunkProcessResult(
+            command=command,
+            returncode=1,
+            output=ChunkProcessOutput(stderr="ffmpeg failed"),
+        )
 
 
 def test_full_course_pipeline_help_runs(capsys) -> None:
@@ -73,6 +110,55 @@ def test_full_course_pipeline_dry_run_plans_without_whisper_or_deepseek(tmp_path
     assert result.chunks_dir == tmp_path / "media" / "课程a" / "chunks"
     assert result.merged_transcript_path == tmp_path / "transcripts" / "merged_transcript.txt"
     assert result.obsidian_note_path is None
+
+
+def test_full_course_pipeline_local_audio_dry_run_generates_plan(tmp_path) -> None:
+    source = tmp_path / "course.mp3"
+    source.write_text("audio", encoding="utf-8")
+    ffmpeg = FakeFfmpegRunner()
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source=str(source),
+            source_type=FullCourseSourceType.LOCAL_AUDIO,
+            title="本地音频",
+            dry_run=True,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=tmp_path / "transcripts",
+        ),
+        ffmpeg_runner=ffmpeg,
+    )
+
+    assert result.dry_run is True
+    assert result.course_dir == tmp_path / "media" / "本地音频"
+    assert result.raw_audio_path == tmp_path / "media" / "本地音频" / "raw_audio" / "course.mp3"
+    assert result.chunks_dir == tmp_path / "media" / "本地音频" / "chunks"
+    assert result.merged_transcript_path == tmp_path / "transcripts" / "merged_transcript.txt"
+    assert result.obsidian_note_path is None
+    assert ffmpeg.commands == []
+
+
+def test_full_course_pipeline_local_video_dry_run_generates_plan(tmp_path) -> None:
+    source = tmp_path / "course.mp4"
+    source.write_text("video", encoding="utf-8")
+    ffmpeg = FakeFfmpegRunner()
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source=str(source),
+            source_type=FullCourseSourceType.LOCAL_VIDEO,
+            dry_run=True,
+            output_dir=tmp_path / "media",
+        ),
+        ffmpeg_runner=ffmpeg,
+    )
+
+    assert result.dry_run is True
+    assert result.title == "course"
+    assert result.raw_audio_path == tmp_path / "media" / "course" / "raw_audio" / "course.mp3"
+    assert result.chunks_dir == tmp_path / "media" / "course" / "chunks"
+    assert result.obsidian_note_path is None
+    assert ffmpeg.commands == []
 
 
 def test_full_course_pipeline_orchestrates_existing_runners_in_order(tmp_path) -> None:
@@ -138,6 +224,158 @@ def test_full_course_pipeline_orchestrates_existing_runners_in_order(tmp_path) -
     assert result.obsidian_note_path == note_path
 
 
+def test_full_course_pipeline_local_audio_orchestrates_to_whisper_and_obsidian(tmp_path) -> None:
+    calls: list[str] = []
+    source = tmp_path / "course.m4a"
+    source.write_text("audio", encoding="utf-8")
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    ffmpeg = FakeFfmpegRunner()
+
+    def fake_whisper_runner(request):
+        calls.append("whisper")
+        assert request.chunks_dir == tmp_path / "media" / "课程a" / "chunks"
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("merged transcript", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    def fake_course_runner(request):
+        calls.append("course")
+        assert request.local_transcript_path.name == "merged_transcript.txt"
+        assert request.obsidian_vault_path == vault_path
+        return SimpleNamespace(obsidian_note_path=vault_path / "课程A.md")
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source=str(source),
+            source_type=FullCourseSourceType.LOCAL_AUDIO,
+            title="课程A",
+            vault_path=vault_path,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=tmp_path / "transcripts",
+        ),
+        ffmpeg_runner=ffmpeg,
+        whisper_runner=fake_whisper_runner,
+        course_runner=fake_course_runner,
+    )
+
+    assert calls == ["whisper", "course"]
+    assert result.raw_audio_path == tmp_path / "media" / "课程a" / "raw_audio" / "course.m4a"
+    assert result.raw_audio_path.exists()
+    assert [command[0] for command in ffmpeg.commands] == ["ffmpeg"]
+    assert result.obsidian_note_path == vault_path / "课程A.md"
+
+
+def test_full_course_pipeline_local_video_orchestrates_to_whisper_and_obsidian(tmp_path) -> None:
+    calls: list[str] = []
+    source = tmp_path / "course.mp4"
+    source.write_text("video", encoding="utf-8")
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    ffmpeg = FakeFfmpegRunner()
+
+    def fake_whisper_runner(request):
+        calls.append("whisper")
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("merged transcript", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    def fake_course_runner(request):
+        calls.append("course")
+        return SimpleNamespace(obsidian_note_path=vault_path / "course.md")
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source=str(source),
+            source_type=FullCourseSourceType.LOCAL_VIDEO,
+            vault_path=vault_path,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=tmp_path / "transcripts",
+        ),
+        ffmpeg_runner=ffmpeg,
+        whisper_runner=fake_whisper_runner,
+        course_runner=fake_course_runner,
+    )
+
+    assert calls == ["whisper", "course"]
+    assert result.title == "course"
+    assert result.raw_audio_path == tmp_path / "media" / "course" / "raw_audio" / "course.mp3"
+    assert len(ffmpeg.commands) == 2
+    assert "-vn" in ffmpeg.commands[0]
+    assert result.obsidian_note_path == vault_path / "course.md"
+
+
+def test_full_course_pipeline_local_skip_existing_reuses_chunks(tmp_path) -> None:
+    calls: list[str] = []
+    source = tmp_path / "course.mp3"
+    source.write_text("audio", encoding="utf-8")
+    raw_audio_path = tmp_path / "media" / "课程a" / "raw_audio" / "course.mp3"
+    chunks_dir = tmp_path / "media" / "课程a" / "chunks"
+    raw_audio_path.parent.mkdir(parents=True)
+    chunks_dir.mkdir(parents=True)
+    raw_audio_path.write_text("existing audio", encoding="utf-8")
+    (chunks_dir / "chunk_001.mp3").write_text("existing chunk", encoding="utf-8")
+    ffmpeg = FakeFfmpegRunner()
+
+    def fake_whisper_runner(request):
+        calls.append("whisper")
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("merged transcript", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source=str(source),
+            source_type=FullCourseSourceType.LOCAL_AUDIO,
+            title="课程A",
+            vault_path=tmp_path,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=tmp_path / "transcripts",
+            skip_existing=True,
+        ),
+        ffmpeg_runner=ffmpeg,
+        whisper_runner=fake_whisper_runner,
+        course_runner=lambda request: SimpleNamespace(obsidian_note_path=tmp_path / "note.md"),
+    )
+
+    assert calls == ["whisper"]
+    assert ffmpeg.commands == []
+    assert result.raw_audio_path == raw_audio_path
+
+
+def test_full_course_pipeline_local_video_ffmpeg_failure_reports_error(tmp_path) -> None:
+    source = tmp_path / "course.mp4"
+    source.write_text("video", encoding="utf-8")
+
+    with pytest.raises(FullCoursePipelineError) as exc:
+        run_full_course_pipeline(
+            FullCoursePipelineRequest(
+                source=str(source),
+                source_type=FullCourseSourceType.LOCAL_VIDEO,
+                output_dir=tmp_path / "media",
+            ),
+            ffmpeg_runner=FailingFfmpegRunner(),
+        )
+
+    assert "ffmpeg audio extraction failed" in str(exc.value)
+    assert "ffmpeg failed" in str(exc.value)
+
+
 def test_full_course_pipeline_title_is_optional(tmp_path) -> None:
     def fake_media_runner(request):
         assert request.title == "course"
@@ -169,6 +407,64 @@ def test_full_course_pipeline_title_is_optional(tmp_path) -> None:
     assert result.source_type is FullCourseSourceType.M3U8
 
 
+def test_full_course_pipeline_local_audio_missing_source_reports_clear_error(tmp_path) -> None:
+    with pytest.raises(FullCoursePipelineError) as exc:
+        run_full_course_pipeline(
+            FullCoursePipelineRequest(
+                source=str(tmp_path / "missing.mp3"),
+                source_type=FullCourseSourceType.LOCAL_AUDIO,
+                dry_run=True,
+            )
+        )
+
+    assert "local source does not exist" in str(exc.value)
+
+
+def test_full_course_pipeline_local_video_missing_source_reports_clear_error(tmp_path) -> None:
+    with pytest.raises(FullCoursePipelineError) as exc:
+        run_full_course_pipeline(
+            FullCoursePipelineRequest(
+                source=str(tmp_path / "missing.mp4"),
+                source_type=FullCourseSourceType.LOCAL_VIDEO,
+                dry_run=True,
+            )
+        )
+
+    assert "local source does not exist" in str(exc.value)
+
+
+def test_full_course_pipeline_local_audio_unsupported_extension(tmp_path) -> None:
+    source = tmp_path / "course.txt"
+    source.write_text("not audio", encoding="utf-8")
+
+    with pytest.raises(FullCoursePipelineError) as exc:
+        run_full_course_pipeline(
+            FullCoursePipelineRequest(
+                source=str(source),
+                source_type=FullCourseSourceType.LOCAL_AUDIO,
+                dry_run=True,
+            )
+        )
+
+    assert "Unsupported local-audio extension" in str(exc.value)
+
+
+def test_full_course_pipeline_local_video_unsupported_extension(tmp_path) -> None:
+    source = tmp_path / "course.txt"
+    source.write_text("not video", encoding="utf-8")
+
+    with pytest.raises(FullCoursePipelineError) as exc:
+        run_full_course_pipeline(
+            FullCoursePipelineRequest(
+                source=str(source),
+                source_type=FullCourseSourceType.LOCAL_VIDEO,
+                dry_run=True,
+            )
+        )
+
+    assert "Unsupported local-video extension" in str(exc.value)
+
+
 def test_full_course_pipeline_reports_missing_chunks(tmp_path) -> None:
     with pytest.raises(FullCoursePipelineError) as exc:
         run_full_course_pipeline(
@@ -191,6 +487,7 @@ def test_full_course_pipeline_main_prints_obsidian_note_path(monkeypatch, tmp_pa
             title="课程A",
             source_type=FullCourseSourceType.M3U8,
             course_dir=tmp_path / "media" / "课程a",
+            raw_audio_path=tmp_path / "media" / "课程a" / "raw_audio" / "course.mp3",
             chunks_dir=tmp_path / "media" / "课程a" / "chunks",
             transcript_dir=tmp_path / "transcripts",
             merged_transcript_path=tmp_path / "transcripts" / "merged_transcript.txt",
