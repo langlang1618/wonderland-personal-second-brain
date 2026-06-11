@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wonderland</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Local AI second brain</p>
+        <h1>Wonderland</h1>
+        <p class="subtitle">
+          Turn courses, videos, audio and links into Obsidian knowledge notes.
+        </p>
+      </section>
+
+      <section class="card">
+        <form id="job-form" class="form">
+          <label for="source">Source</label>
+          <input
+            id="source"
+            name="source"
+            type="text"
+            autocomplete="off"
+            placeholder="Paste an m3u8 link or local file path"
+            required
+          />
+
+          <label for="title">Note Title</label>
+          <input
+            id="title"
+            name="title"
+            type="text"
+            autocomplete="off"
+            placeholder="Give your note a clear title"
+            required
+          />
+
+          <button id="start-button" type="submit">Start</button>
+        </form>
+      </section>
+
+      <section class="status-grid">
+        <article class="status-card">
+          <span class="label">Status</span>
+          <strong id="status">Ready</strong>
+        </article>
+        <article class="status-card">
+          <span class="label">Obsidian note path</span>
+          <strong id="note-path">Waiting for your first note</strong>
+        </article>
+      </section>
+
+      <section class="console-card">
+        <div class="console-header">
+          <span>Logs</span>
+          <span id="job-id"></span>
+        </div>
+        <pre id="log-output">Wonderland is ready.</pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

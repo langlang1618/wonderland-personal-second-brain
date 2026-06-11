@@ -29,7 +29,10 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = []
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+]
 
 [project.optional-dependencies]
 dev = [

@@ -2,6 +2,7 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 
 .env
 .env.*
@@ -27,6 +28,9 @@ data/*
 !data/obsidian/.gitkeep
 !data/tmp/
 !data/tmp/.gitkeep
+!data/jobs/
+data/jobs/*
+!data/jobs/.gitkeep
 
 # Generated transcript outputs
 data/transcripts/*
