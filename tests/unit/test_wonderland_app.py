@@ -12,9 +12,12 @@ def test_wonderland_home_renders_product_page() -> None:
 
     assert response.status_code == 200
     assert "Wonderland" in response.text
+    assert "Local AI Second Brain" in response.text
+    assert "Create a knowledge note" in response.text
     assert "Turn courses, videos, audio and links into Obsidian knowledge notes." in response.text
     assert 'id="title"' in response.text
     assert "Give your note a clear title" in response.text
+    assert "Show Logs" in response.text
     assert "Start Pipeline" not in response.text
     assert "Pipeline Status" not in response.text
 

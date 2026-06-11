@@ -7,59 +7,71 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
+    <div class="ambient" aria-hidden="true"></div>
     <main class="shell">
-      <section class="hero">
-        <p class="eyebrow">Local AI second brain</p>
-        <h1>Wonderland</h1>
-        <p class="subtitle">
-          Turn courses, videos, audio and links into Obsidian knowledge notes.
-        </p>
-      </section>
+      <div class="product-grid">
+        <section class="hero">
+          <p class="eyebrow">Local AI Second Brain</p>
+          <h1>Wonderland</h1>
+          <p class="subtitle">
+            Turn courses, videos, audio and links into Obsidian knowledge notes.
+          </p>
+        </section>
 
-      <section class="card">
-        <form id="job-form" class="form">
-          <label for="source">Source</label>
-          <input
-            id="source"
-            name="source"
-            type="text"
-            autocomplete="off"
-            placeholder="Paste an m3u8 link or local file path"
-            required
-          />
+        <section class="card">
+          <div class="card-heading">
+            <span class="spark"></span>
+            <h2>Create a knowledge note</h2>
+          </div>
 
-          <label for="title">Note Title</label>
-          <input
-            id="title"
-            name="title"
-            type="text"
-            autocomplete="off"
-            placeholder="Give your note a clear title"
-            required
-          />
+          <form id="job-form" class="form">
+            <label for="source">Source</label>
+            <input
+              id="source"
+              name="source"
+              type="text"
+              autocomplete="off"
+              placeholder="Paste an m3u8 link or local file path"
+              required
+            />
 
-          <button id="start-button" type="submit">Start</button>
-        </form>
-      </section>
+            <label for="title">Title</label>
+            <input
+              id="title"
+              name="title"
+              type="text"
+              autocomplete="off"
+              placeholder="Give your note a clear title"
+              required
+            />
 
-      <section class="status-grid">
-        <article class="status-card">
-          <span class="label">Status</span>
-          <strong id="status">Ready</strong>
-        </article>
-        <article class="status-card">
-          <span class="label">Obsidian note path</span>
-          <strong id="note-path">Waiting for your first note</strong>
-        </article>
-      </section>
+            <button id="start-button" type="submit">Start</button>
+          </form>
 
-      <section class="console-card">
-        <div class="console-header">
-          <span>Logs</span>
-          <span id="job-id"></span>
-        </div>
-        <pre id="log-output">Wonderland is ready.</pre>
-      </section>
+          <section class="status-panel">
+            <article class="status-card">
+              <span class="label">Status</span>
+              <strong id="status" data-state="idle">Idle</strong>
+            </article>
+            <article class="result-card" id="result-card">
+              <span class="label">Obsidian Note Path</span>
+              <strong id="note-path">Waiting for your first note</strong>
+            </article>
+          </section>
+
+          <section class="console-card is-collapsed" id="log-panel">
+            <button class="log-toggle" id="log-toggle" type="button">Show Logs</button>
+            <div class="console-body">
+              <div class="console-header">
+                <span>Logs</span>
+                <span id="job-id"></span>
+              </div>
+              <pre id="log-output">Wonderland is ready.</pre>
+            </div>
+          </section>
+        </section>
+      </div>
+
     </main>
 
     <script src="/static/app.js"></script>
