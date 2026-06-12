@@ -477,6 +477,43 @@ def test_full_course_pipeline_local_video_orchestrates_to_whisper_and_obsidian(t
     assert result.obsidian_note_path == vault_path / "course.md"
 
 
+def test_full_course_pipeline_ts_auto_detects_as_local_video(tmp_path) -> None:
+    source = tmp_path / "course.ts"
+    source.write_text("video", encoding="utf-8")
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    ffmpeg = FakeFfmpegRunner()
+
+    def fake_whisper_runner(request):
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("merged transcript", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source=str(source),
+            vault_path=vault_path,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=tmp_path / "transcripts",
+        ),
+        ffmpeg_runner=ffmpeg,
+        whisper_runner=fake_whisper_runner,
+        course_runner=lambda request: SimpleNamespace(
+            obsidian_note_path=vault_path / "course.md"
+        ),
+    )
+
+    assert result.source_type is FullCourseSourceType.LOCAL_VIDEO
+    assert result.raw_audio_path == tmp_path / "media" / "course" / "raw_audio" / "course.mp3"
+    assert len(ffmpeg.commands) == 2
+    assert "-vn" in ffmpeg.commands[0]
+
+
 def test_full_course_pipeline_local_skip_existing_reuses_chunks(tmp_path) -> None:
     calls: list[str] = []
     source = tmp_path / "course.mp3"

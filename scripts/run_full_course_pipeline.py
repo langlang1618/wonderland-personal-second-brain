@@ -155,7 +155,7 @@ class LocalMediaIngestionResult:
 
 
 SUPPORTED_AUDIO_SUFFIXES = {".mp3", ".m4a", ".wav", ".aac", ".flac"}
-SUPPORTED_VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm"}
+SUPPORTED_VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".ts"}
 OUTPUT_AUDIO_FORMAT = "mp3"
 
 
