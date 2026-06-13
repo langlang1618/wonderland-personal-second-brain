@@ -138,6 +138,7 @@ def test_markdown_generator_outputs_obsidian_ready_structure() -> None:
     assert 'tags: ["ai", "rag", "obsidian"]' in text
     assert "# AI整理部分" in text
     assert "## Clean Lecture" in text
+    assert text.index("## Action Items") < text.index("## Summary")
     assert "## Summary" in text
     assert "A compact summary." in text
     assert "## Chapters" in text
@@ -149,16 +150,37 @@ def test_markdown_generator_outputs_obsidian_ready_structure() -> None:
     assert "- Clean inputs improve RAG." in text
     assert "## Action Items" in text
     assert "- [ ] Review generated note. @me" in text
-    assert "## Tags" in text
-    assert "#rag #obsidian" in text
-    assert "## Clean Transcript" in text
-    assert "Clean transcript body." in text
+    assert "## Tags" not in text
+    assert "#rag #obsidian" not in text
+    assert "## Clean Transcript" not in text
+    assert "Clean transcript body." not in text
     assert "# 可读转录" in text
     assert "## 可读版原文" in text
     assert "美联储沃什" in text
     assert "# 原始逐字稿" in text
     assert "歡迎大家來直播間今天講rag美聯儲臥石提到cpi和m2" in text
     assert markdown.path == Path("custom-markdown/src_1/chunk_0000_clean-lecture.md")
+
+
+def test_markdown_body_order_matches_knowledge_template() -> None:
+    result = create_default_markdown_generator().generate(
+        MarkdownGenerationRequest(cleaned_transcript=cleaned_artifact())
+    )
+
+    assert result.markdown is not None
+    text = result.markdown.markdown_text
+    ordered_headings = [
+        "## Action Items",
+        "## Summary",
+        "## Chapters",
+        "## Key Insights",
+        "# 可读转录",
+        "# 原始逐字稿",
+    ]
+    positions = [text.index(heading) for heading in ordered_headings]
+    assert positions == sorted(positions)
+    assert "## Tags" not in text
+    assert "## Clean Transcript" not in text
 
 
 def test_markdown_artifact_has_lineage_and_snapshot_metadata() -> None:

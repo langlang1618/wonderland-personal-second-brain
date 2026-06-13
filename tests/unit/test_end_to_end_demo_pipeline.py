@@ -24,6 +24,7 @@ def test_local_audio_demo_pipeline_writes_obsidian_note(tmp_path) -> None:
     markdown = result.obsidian_note_path.read_text(encoding="utf-8")
     assert "# AI整理部分" in markdown
     assert "## AI Knowledge Pipeline Demo" in markdown
+    assert markdown.index("## Action Items") < markdown.index("## Summary")
     assert "## Summary" in markdown
     assert "A local demo showing how audio flows" in markdown
     assert "## Chapters" in markdown
@@ -33,8 +34,9 @@ def test_local_audio_demo_pipeline_writes_obsidian_note(tmp_path) -> None:
     assert "- Mock providers allow local demos without network or AI APIs." in markdown
     assert "## Action Items" in markdown
     assert "- [ ] Replace demo providers with real providers when ready." in markdown
-    assert "## Tags" in markdown
-    assert "#ai-pipeline #obsidian #demo" in markdown
+    assert "## Tags" not in markdown
+    assert "#ai-pipeline #obsidian #demo" not in markdown
+    assert "## Clean Transcript" not in markdown
 
     artifacts = result.artifacts
     assert artifacts.obsidian_note.snapshot.lineage.input_snapshot_ids == (

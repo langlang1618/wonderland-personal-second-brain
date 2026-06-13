@@ -118,12 +118,14 @@ def test_real_course_pipeline_generates_obsidian_note(tmp_path) -> None:
     note_text = result.obsidian_note_path.read_text(encoding="utf-8")
     assert "# AI整理部分" in note_text
     assert "## 第一节真实课程" in note_text
+    assert note_text.index("## Action Items") < note_text.index("## Summary")
     assert "## Summary" in note_text
     assert "这是第一节课程的结构化摘要。" in note_text
     assert "## Chapters" in note_text
     assert "### 系统目标" in note_text
-    assert "## Tags" in note_text
-    assert "#course #deepseek #obsidian" in note_text
+    assert "## Tags" not in note_text
+    assert "#course #deepseek #obsidian" not in note_text
+    assert "## Clean Transcript" not in note_text
     assert "# 可读转录" in note_text
     assert "这里修复了标点。" in note_text
     assert "# 原始逐字稿" in note_text

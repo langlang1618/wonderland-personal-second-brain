@@ -359,10 +359,13 @@ def test_openai_cleaning_output_flows_to_markdown_and_obsidian(tmp_path) -> None
     note_text = write_result.note.path.read_text(encoding="utf-8")
     assert "# AI Knowledge Pipeline Foundations" in note_text
     assert "# AI整理部分" in note_text
+    assert note_text.index("## Action Items") < note_text.index("## Summary")
     assert "## Summary" in note_text
     assert "## Key Insights" in note_text
     assert "## Action Items" in note_text
-    assert "#rag #obsidian #agent-memory" in note_text
+    assert "#rag #obsidian #agent-memory" not in note_text
+    assert "## Tags" not in note_text
+    assert "## Clean Transcript" not in note_text
     assert "# 可读转录" in note_text
     assert "你好，世界。" in note_text
     assert "# 原始逐字稿" in note_text

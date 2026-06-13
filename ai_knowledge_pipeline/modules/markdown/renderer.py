@@ -81,6 +81,17 @@ def _body(request: MarkdownGenerationRequest) -> str:
     ready = request.cleaned_transcript.markdown_ready
     lines: list[str] = ["# AI整理部分", "", f"## {ready.title}", ""]
 
+    if request.config.include_action_items and ready.action_items:
+        lines.extend(("## Action Items", ""))
+        for action in ready.action_items:
+            suffix = ""
+            if action.owner:
+                suffix += f" @{action.owner}"
+            if action.due:
+                suffix += f" due {action.due}"
+            lines.append(f"- [ ] {action.text}{suffix}")
+        lines.append("")
+
     if request.config.include_summary:
         lines.extend(("## Summary", "", ready.summary, ""))
 
@@ -108,23 +119,6 @@ def _body(request: MarkdownGenerationRequest) -> str:
             lines.append(f"- {insight.text}")
         lines.append("")
 
-    if request.config.include_action_items and ready.action_items:
-        lines.extend(("## Action Items", ""))
-        for action in ready.action_items:
-            suffix = ""
-            if action.owner:
-                suffix += f" @{action.owner}"
-            if action.due:
-                suffix += f" due {action.due}"
-            lines.append(f"- [ ] {action.text}{suffix}")
-        lines.append("")
-
-    if request.config.include_tags_section and ready.semantic_tags:
-        lines.extend(("## Tags", ""))
-        lines.append(" ".join(f"#{tag}" for tag in ready.semantic_tags))
-        lines.append("")
-
-    lines.extend(("## Clean Transcript", "", ready.cleaned_text, ""))
     readable_transcript = (
         request.cleaned_transcript.readable_transcript_text
         or ready.readable_transcript_text

@@ -126,9 +126,12 @@ def test_batch_pipeline_generates_multiple_markdown_notes(tmp_path) -> None:
     assert result.generated_note_paths[1].name == "26-5-10直播-002.md"
     note_text = result.generated_note_paths[0].read_text(encoding="utf-8")
     assert "# AI整理部分" in note_text
+    assert note_text.index("## Action Items") < note_text.index("## Summary")
     assert "# 可读转录" in note_text
     assert "# 原始逐字稿" in note_text
-    assert "#batch #course" in note_text
+    assert "#batch #course" not in note_text
+    assert "## Tags" not in note_text
+    assert "## Clean Transcript" not in note_text
     assert provider.requests[0].prompt.terminology[-6:] == (
         "美联储沃什",
         "鲍威尔",
