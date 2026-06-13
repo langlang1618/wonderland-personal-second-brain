@@ -229,27 +229,31 @@ def run_full_course_pipeline(
     if not chunk_paths:
         raise FullCoursePipelineError(f"No audio chunks were produced in: {chunks_dir}")
 
-    try:
-        whisper_result = whisper_runner(
-            LocalWhisperRuntimeRequest(
-                chunks_dir=chunks_dir,
-                output_dir=transcript_dir,
-                model_size=request.model_size,
-                language=request.language,
-                merge=True,
+    merged_path = _existing_merged_transcript_path(transcript_dir, request.skip_existing)
+    if merged_path is None:
+        try:
+            whisper_result = whisper_runner(
+                LocalWhisperRuntimeRequest(
+                    chunks_dir=chunks_dir,
+                    output_dir=transcript_dir,
+                    model_size=request.model_size,
+                    language=request.language,
+                    merge=True,
+                )
             )
-        )
-    except LocalWhisperRuntimeError as exc:
-        raise FullCoursePipelineError(f"Whisper transcription failed: {exc}") from exc
-    if whisper_result.errors:
-        raise FullCoursePipelineError(
-            f"Whisper transcription produced errors: {'; '.join(whisper_result.errors)}"
-        )
-    merged_path = whisper_result.merged_transcript_path
-    if merged_path is None or not merged_path.exists():
-        raise FullCoursePipelineError(
-            "Whisper transcription did not produce merged_transcript.txt."
-        )
+        except LocalWhisperRuntimeError as exc:
+            raise FullCoursePipelineError(f"Whisper transcription failed: {exc}") from exc
+        if whisper_result.errors:
+            raise FullCoursePipelineError(
+                f"Whisper transcription produced errors: {'; '.join(whisper_result.errors)}"
+            )
+        merged_path = whisper_result.merged_transcript_path
+        if merged_path is None or not merged_path.exists():
+            raise FullCoursePipelineError(
+                "Whisper transcription did not produce merged_transcript.txt."
+            )
+    else:
+        print(f"skip_existing: using existing merged transcript: {merged_path}")
 
     vault_path = _resolve_vault_path(request)
     try:
@@ -550,6 +554,18 @@ def _chunk_paths(chunks_dir: Path) -> tuple[Path, ...]:
     if not chunks_dir.exists():
         return ()
     return tuple(sorted(chunks_dir.glob(f"chunk_*.{OUTPUT_AUDIO_FORMAT}")))
+
+
+def _existing_merged_transcript_path(
+    transcript_dir: Path,
+    skip_existing: bool,
+) -> Path | None:
+    if not skip_existing:
+        return None
+    merged_path = transcript_dir / "merged_transcript.txt"
+    if transcript_dir.exists() and merged_path.exists():
+        return merged_path
+    return None
 
 
 def _parse_cleanup(value: str) -> CleanupPolicy:

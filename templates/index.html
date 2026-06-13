@@ -45,8 +45,19 @@
               required
             />
 
-            <button id="start-button" type="submit">Start</button>
+            <div class="action-row">
+              <button id="start-button" type="submit">Start</button>
+              <button id="stop-button" class="stop-button" type="button" hidden>Stop</button>
+            </div>
           </form>
+
+          <section class="recent-card" id="recent-card" hidden>
+            <div class="recent-heading">
+              <span class="label">Recent Jobs</span>
+              <span id="recent-job-count"></span>
+            </div>
+            <div class="recent-list" id="recent-jobs-list"></div>
+          </section>
 
           <section class="status-panel">
             <article class="status-card">

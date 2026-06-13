@@ -557,6 +557,42 @@ def test_full_course_pipeline_local_skip_existing_reuses_chunks(tmp_path) -> Non
     assert result.raw_audio_path == raw_audio_path
 
 
+def test_full_course_pipeline_skip_existing_reuses_merged_transcript_without_whisper(
+    tmp_path,
+) -> None:
+    calls: list[str] = []
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir()
+    merged = transcript_dir / "merged_transcript.txt"
+    merged.write_text("existing merged transcript", encoding="utf-8")
+
+    def fake_whisper_runner(request):
+        raise AssertionError("existing merged transcript should skip transcription")
+
+    def fake_course_runner(request):
+        calls.append("course")
+        assert request.local_transcript_path == merged
+        return SimpleNamespace(obsidian_note_path=tmp_path / "note.md")
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source="https://example.com/course.m3u8",
+            title="课程A",
+            vault_path=tmp_path,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=transcript_dir,
+            skip_existing=True,
+        ),
+        media_ingestion_runner=lambda request: _media_result(tmp_path, chunk_count=2),
+        whisper_runner=fake_whisper_runner,
+        course_runner=fake_course_runner,
+    )
+
+    assert calls == ["course"]
+    assert result.merged_transcript_path == merged
+    assert result.obsidian_note_path == tmp_path / "note.md"
+
+
 def test_full_course_pipeline_local_video_ffmpeg_failure_reports_error(tmp_path) -> None:
     source = tmp_path / "course.mp4"
     source.write_text("video", encoding="utf-8")

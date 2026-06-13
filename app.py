@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -22,6 +23,8 @@ APP_ROOT = Path(__file__).resolve().parent
 JOBS_DIR = APP_ROOT / "data" / "jobs"
 INDEX_HTML = APP_ROOT / "templates" / "index.html"
 DEFAULT_TAGS = "finance,course,whisper-small,wonderland"
+HISTORY_LIMIT = 50
+CANCEL_TIMEOUT_SECONDS = 5
 
 
 class JobCreateRequest(BaseModel):
@@ -33,7 +36,7 @@ class JobCreateRequest(BaseModel):
 
 @dataclass(slots=True)
 class JobRecord:
-    """In-memory job state mirrored by an on-disk log file."""
+    """Job state mirrored by an on-disk history file and log file."""
 
     job_id: str
     source: str
@@ -45,6 +48,8 @@ class JobRecord:
     returncode: int | None = None
     obsidian_note_path: str | None = None
     error: str | None = None
+    pid: int | None = None
+    process: asyncio.subprocess.Process | None = field(default=None, repr=False, compare=False)
 
 
 app = FastAPI(title="Wonderland")
@@ -82,8 +87,16 @@ async def create_job(payload: JobCreateRequest) -> dict[str, Any]:
         log_path=log_path,
     )
     JOBS[job_id] = record
+    _persist_job(record)
     _create_background_task(_run_job(record))
     return _job_payload(record)
+
+
+@app.get("/api/jobs")
+async def list_jobs() -> list[dict[str, Any]]:
+    """Return recently created Wonderland jobs from durable history."""
+
+    return [_job_payload(record) for record in _read_history()]
 
 
 @app.get("/api/jobs/{job_id}")
@@ -91,6 +104,17 @@ async def get_job(job_id: str) -> dict[str, Any]:
     """Return current job state."""
 
     return _job_payload(_get_job(job_id))
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str) -> dict[str, Any]:
+    """Cancel a running Wonderland job."""
+
+    record = _get_job(job_id)
+    if record.status not in {"queued", "running"}:
+        return _job_payload(record)
+    await _cancel_job(record)
+    return _job_payload(record)
 
 
 @app.get("/api/jobs/{job_id}/log", response_class=PlainTextResponse)
@@ -106,8 +130,12 @@ async def get_job_log(job_id: str) -> PlainTextResponse:
 async def _run_job(record: JobRecord) -> None:
     """Run the existing full-course CLI and stream output into the job log."""
 
+    if record.status == "cancelled":
+        _persist_job(record)
+        return
     record.status = "running"
     record.updated_at = datetime.now(timezone.utc).isoformat()
+    _persist_job(record)
     command = _build_command(record.source, record.title)
     _write_log_header(record, command)
     env = os.environ.copy()
@@ -126,8 +154,13 @@ async def _run_job(record: JobRecord) -> None:
         record.error = str(exc)
         record.updated_at = datetime.now(timezone.utc).isoformat()
         _append_log(record.log_path, f"Failed to start: {exc}\n")
+        _persist_job(record)
         return
 
+    record.process = process
+    record.pid = process.pid
+    record.updated_at = datetime.now(timezone.utc).isoformat()
+    _persist_job(record)
     assert process.stdout is not None
     while True:
         line = await process.stdout.readline()
@@ -142,10 +175,14 @@ async def _run_job(record: JobRecord) -> None:
     returncode = await process.wait()
     record.returncode = returncode
     record.updated_at = datetime.now(timezone.utc).isoformat()
+    record.process = None
     log_text = record.log_path.read_text(encoding="utf-8", errors="replace")
     record.obsidian_note_path = record.obsidian_note_path or _extract_obsidian_note_path(
         log_text
     )
+    if record.status == "cancelled":
+        _persist_job(record)
+        return
     if returncode == 0:
         record.status = "success"
         _append_log(record.log_path, "\nCompleted\n")
@@ -153,6 +190,29 @@ async def _run_job(record: JobRecord) -> None:
         record.status = "failed"
         record.error = f"Command exited with code {returncode}"
         _append_log(record.log_path, f"\nFailed with exit code {returncode}\n")
+    _persist_job(record)
+
+
+async def _cancel_job(record: JobRecord) -> None:
+    """Terminate a running job process and persist cancelled state."""
+
+    _append_log(record.log_path, "\nCancelled by user\n")
+    process = record.process
+    if process is not None and process.returncode is None:
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=CANCEL_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+        record.returncode = process.returncode
+    elif record.pid is not None:
+        _append_log(record.log_path, "Process handle unavailable; status marked cancelled.\n")
+    record.status = "cancelled"
+    record.error = "Cancelled by user"
+    record.updated_at = datetime.now(timezone.utc).isoformat()
+    record.process = None
+    _persist_job(record)
 
 
 def _build_command(source: str, title: str | None) -> list[str]:
@@ -205,14 +265,69 @@ def _job_payload(record: JobRecord) -> dict[str, Any]:
         "obsidian_note_path": record.obsidian_note_path,
         "error": record.error,
         "log_path": str(record.log_path),
+        "pid": record.pid,
     }
 
 
 def _get_job(job_id: str) -> JobRecord:
-    try:
+    if job_id in JOBS:
         return JOBS[job_id]
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Job not found.") from exc
+    for record in _read_history():
+        if record.job_id == job_id:
+            JOBS[job_id] = record
+            return record
+    raise HTTPException(status_code=404, detail="Job not found.")
+
+
+def _history_path() -> Path:
+    return JOBS_DIR / "history.json"
+
+
+def _read_history() -> list[JobRecord]:
+    path = _history_path()
+    if not path.exists():
+        return []
+    try:
+        raw_jobs = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(raw_jobs, list):
+        return []
+    records: list[JobRecord] = []
+    for item in raw_jobs:
+        if isinstance(item, dict):
+            records.append(_record_from_history(item))
+    return sorted(records, key=lambda record: record.created_at, reverse=True)
+
+
+def _persist_job(record: JobRecord) -> None:
+    jobs_by_id = {existing.job_id: existing for existing in _read_history()}
+    jobs_by_id[record.job_id] = record
+    records = sorted(jobs_by_id.values(), key=lambda item: item.created_at, reverse=True)[
+        :HISTORY_LIMIT
+    ]
+    path = _history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps([_job_payload(item) for item in records], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _record_from_history(item: dict[str, Any]) -> JobRecord:
+    return JobRecord(
+        job_id=str(item.get("job_id", "")),
+        source=str(item.get("source", "")),
+        title=item.get("title"),
+        status=str(item.get("status", "queued")),
+        log_path=Path(str(item.get("log_path", ""))),
+        created_at=str(item.get("created_at", datetime.now(timezone.utc).isoformat())),
+        updated_at=str(item.get("updated_at", datetime.now(timezone.utc).isoformat())),
+        returncode=item.get("returncode"),
+        obsidian_note_path=item.get("obsidian_note_path"),
+        error=item.get("error"),
+        pid=item.get("pid"),
+    )
 
 
 def _write_log_header(record: JobRecord, command: list[str]) -> None:
@@ -220,11 +335,18 @@ def _write_log_header(record: JobRecord, command: list[str]) -> None:
         record.log_path,
         "\n".join(
             [
-                "Wonderland job started",
+                "Starting Wonderland job",
                 f"job_id: {record.job_id}",
                 f"created_at: {record.created_at}",
                 f"source: {record.source}",
                 f"title: {record.title or ''}",
+                "Running full course pipeline",
+                "Detecting source",
+                "Extracting audio",
+                "Chunking audio",
+                "Transcribing",
+                "Cleaning transcript",
+                "Writing Obsidian note",
                 f"command: {_redacted_command(command)}",
                 "",
             ]
