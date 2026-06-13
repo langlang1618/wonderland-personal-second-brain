@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import ModuleType
 
 from ai_knowledge_pipeline.core.artifact import (
     ArtifactLineage,
@@ -18,6 +19,9 @@ from ai_knowledge_pipeline.modules.transcription import (
     TranscriptionConfig,
     TranscriptionErrorCode,
     TranscriptionRequest,
+)
+from ai_knowledge_pipeline.modules.transcription.runtime.faster_whisper_provider import (
+    _default_model_factory,
 )
 
 
@@ -144,7 +148,10 @@ def test_faster_whisper_provider_model_load_failure_is_structured(tmp_path) -> N
     def failing_factory(model_size, **kwargs):
         raise RuntimeError("model download failed")
 
-    provider = FasterWhisperProvider(model_factory=failing_factory)
+    provider = FasterWhisperProvider(
+        FasterWhisperConfig(model_load_retry_delay_seconds=0),
+        model_factory=failing_factory,
+    )
 
     result = provider.transcribe(
         TranscriptionRequest(chunk=chunk_artifact(audio_path))
@@ -152,3 +159,76 @@ def test_faster_whisper_provider_model_load_failure_is_structured(tmp_path) -> N
 
     assert not result.is_success
     assert result.issues[0].code is TranscriptionErrorCode.MODEL_LOAD_FAILED
+    assert "after 3 attempt" in result.issues[0].message
+    assert result.issues[0].details["attempts"] == "3"
+
+
+def test_faster_whisper_provider_retries_model_load_then_transcribes(tmp_path) -> None:
+    audio_path = tmp_path / "chunk_001.mp3"
+    audio_path.write_text("audio", encoding="utf-8")
+    attempts = {"count": 0}
+    model = FakeModel()
+
+    def flaky_factory(model_size, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise RuntimeError("503 Service Unavailable")
+        return model
+
+    provider = FasterWhisperProvider(
+        FasterWhisperConfig(
+            model_size=FasterWhisperModelSize.SMALL,
+            language="zh",
+            model_load_retry_delay_seconds=0,
+        ),
+        model_factory=flaky_factory,
+    )
+
+    result = provider.transcribe(
+        TranscriptionRequest(
+            chunk=chunk_artifact(audio_path),
+            config=TranscriptionConfig(model_name="small", language="zh"),
+        )
+    )
+
+    assert result.is_success
+    assert attempts["count"] == 3
+    assert result.text == "第一段。\n第二段。"
+
+
+def test_default_model_factory_uses_local_cache_first(monkeypatch) -> None:
+    calls = []
+    fake_module = ModuleType("faster_whisper")
+
+    class FakeWhisperModel:
+        def __init__(self, model_size, **kwargs):
+            calls.append((model_size, kwargs))
+
+    fake_module.WhisperModel = FakeWhisperModel
+    monkeypatch.setitem(__import__("sys").modules, "faster_whisper", fake_module)
+
+    _default_model_factory("small", device="cpu", compute_type="int8")
+
+    assert calls[0][0] == "small"
+    assert calls[0][1]["local_files_only"] is True
+    assert calls[0][1]["device"] == "cpu"
+    assert calls[0][1]["compute_type"] == "int8"
+
+
+def test_default_model_factory_falls_back_when_local_cache_fails(monkeypatch) -> None:
+    calls = []
+    fake_module = ModuleType("faster_whisper")
+
+    class FakeWhisperModel:
+        def __init__(self, model_size, **kwargs):
+            calls.append((model_size, kwargs))
+            if kwargs.get("local_files_only") is True:
+                raise RuntimeError("local cache missing")
+
+    fake_module.WhisperModel = FakeWhisperModel
+    monkeypatch.setitem(__import__("sys").modules, "faster_whisper", fake_module)
+
+    _default_model_factory("small", device="cpu", compute_type="int8")
+
+    assert calls[0][1]["local_files_only"] is True
+    assert calls[1][1]["local_files_only"] is False

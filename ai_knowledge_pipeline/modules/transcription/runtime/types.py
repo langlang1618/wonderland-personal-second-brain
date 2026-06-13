@@ -26,6 +26,10 @@ class FasterWhisperConfig:
     language: str | None = "zh"
     device: str = "auto"
     compute_type: str = "default"
+    model_load_retries: int = 3
+    model_load_retry_delay_seconds: float = 5
+    model_load_timeout_seconds: float | None = 300
+    transcription_timeout_seconds: float | None = 7200
 
 
 @dataclass(frozen=True, slots=True)

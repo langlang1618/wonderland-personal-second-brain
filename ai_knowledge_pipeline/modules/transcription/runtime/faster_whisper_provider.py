@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import signal
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from ai_knowledge_pipeline.modules.transcription.errors import TranscriptionErrorCode
 from ai_knowledge_pipeline.modules.transcription.interfaces import TranscriptionProvider
@@ -65,23 +70,38 @@ class FasterWhisperProvider(TranscriptionProvider):
         except Exception as exc:
             return _issue_result(
                 TranscriptionErrorCode.MODEL_LOAD_FAILED,
-                str(exc),
+                _model_load_error_message(model_size, exc, self._config),
                 "model_size",
-                {"model_size": model_size},
+                {
+                    "model_size": model_size,
+                    "attempts": str(_retry_count(self._config)),
+                    "device": self._config.device,
+                    "compute_type": self._config.compute_type,
+                    "error_type": exc.__class__.__name__,
+                },
             )
 
         try:
-            raw_segments, info = model.transcribe(
-                str(request.chunk.path),
-                language=language,
+            raw_segments, info = _call_with_timeout(
+                lambda: model.transcribe(
+                    str(request.chunk.path),
+                    language=language,
+                ),
+                timeout_seconds=self._config.transcription_timeout_seconds,
+                operation="faster-whisper transcription",
             )
             segments = tuple(_segment(segment, index) for index, segment in enumerate(raw_segments))
         except Exception as exc:
             return _issue_result(
                 TranscriptionErrorCode.AUDIO_TRANSCRIPTION_FAILED,
-                str(exc),
+                _transcription_error_message(request.chunk.path, exc, self._config),
                 "chunk.path",
-                {"path": str(request.chunk.path)},
+                {
+                    "path": str(request.chunk.path),
+                    "model_size": model_size,
+                    "timeout_seconds": str(self._config.transcription_timeout_seconds),
+                    "error_type": exc.__class__.__name__,
+                },
             )
 
         text = "\n".join(segment.text for segment in segments).strip()
@@ -111,18 +131,102 @@ class FasterWhisperProvider(TranscriptionProvider):
         if self._model is not None:
             return self._model
         factory = self._model_factory or _default_model_factory
-        self._model = factory(
-            model_size,
-            device=self._config.device,
-            compute_type=self._config.compute_type,
-        )
+        last_error: Exception | None = None
+        for attempt in range(1, _retry_count(self._config) + 1):
+            try:
+                self._model = _call_with_timeout(
+                    lambda: factory(
+                        model_size,
+                        device=self._config.device,
+                        compute_type=self._config.compute_type,
+                    ),
+                    timeout_seconds=self._config.model_load_timeout_seconds,
+                    operation="faster-whisper model load",
+                )
+                return self._model
+            except ImportError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                if attempt < _retry_count(self._config):
+                    time.sleep(self._config.model_load_retry_delay_seconds)
+        assert last_error is not None
+        raise last_error
         return self._model
 
 
 def _default_model_factory(model_size: str, **kwargs):
     from faster_whisper import WhisperModel
 
-    return WhisperModel(model_size, **kwargs)
+    try:
+        return WhisperModel(model_size, local_files_only=True, **kwargs)
+    except TypeError:
+        raise
+    except Exception:
+        return WhisperModel(model_size, local_files_only=False, **kwargs)
+
+
+def _retry_count(config: FasterWhisperConfig) -> int:
+    return max(1, int(config.model_load_retries))
+
+
+def _model_load_error_message(
+    model_size: str,
+    exc: Exception,
+    config: FasterWhisperConfig,
+) -> str:
+    return (
+        "Unable to load faster-whisper model "
+        f"'{model_size}' after {_retry_count(config)} attempt(s). "
+        "The provider tries the local HuggingFace cache first and then falls back "
+        "to the normal faster-whisper loader. If this mentions 503 Service "
+        "Unavailable, it is usually a transient HuggingFace/network issue; retry "
+        "the command or pre-download the model cache. "
+        f"Last error: {exc}"
+    )
+
+
+def _transcription_error_message(
+    path: Path,
+    exc: Exception,
+    config: FasterWhisperConfig,
+) -> str:
+    return (
+        f"faster-whisper failed while transcribing {path}. "
+        f"Timeout protection: {config.transcription_timeout_seconds} seconds. "
+        f"Last error: {exc}"
+    )
+
+
+def _call_with_timeout(function, *, timeout_seconds: float | None, operation: str):
+    with _timeout(timeout_seconds, operation):
+        return function()
+
+
+@contextmanager
+def _timeout(timeout_seconds: float | None, operation: str) -> Iterator[None]:
+    if (
+        timeout_seconds is None
+        or timeout_seconds <= 0
+        or threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "SIGALRM")
+    ):
+        yield
+        return
+
+    def _raise_timeout(signum, frame):
+        raise TimeoutError(f"{operation} timed out after {timeout_seconds} seconds")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL, previous_timer[0], previous_timer[1])
 
 
 def _segment(raw_segment, index: int) -> TranscriptSegment:
