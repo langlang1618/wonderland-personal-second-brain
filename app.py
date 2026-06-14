@@ -18,13 +18,20 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from ai_knowledge_pipeline.modules.profiles import (
+    DEFAULT_PROFILE_ID,
+    KnowledgeProductProfile,
+    ProfileRegistry,
+    UnknownProfileError,
+)
+
 
 APP_ROOT = Path(__file__).resolve().parent
 JOBS_DIR = APP_ROOT / "data" / "jobs"
 INDEX_HTML = APP_ROOT / "templates" / "index.html"
-DEFAULT_TAGS = "finance,course,whisper-small,wonderland"
 HISTORY_LIMIT = 50
 CANCEL_TIMEOUT_SECONDS = 5
+PROFILE_REGISTRY = ProfileRegistry()
 
 
 class JobCreateRequest(BaseModel):
@@ -32,6 +39,7 @@ class JobCreateRequest(BaseModel):
 
     source: str = Field(min_length=1)
     title: str = Field(min_length=1)
+    profile_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -49,6 +57,10 @@ class JobRecord:
     obsidian_note_path: str | None = None
     error: str | None = None
     pid: int | None = None
+    profile_id: str = DEFAULT_PROFILE_ID
+    profile_display_name: str = "Finance"
+    prompt_profile: str = "finance"
+    output_folder: str = "AI Knowledge Pipeline/finance"
     process: asyncio.subprocess.Process | None = field(default=None, repr=False, compare=False)
 
 
@@ -77,6 +89,7 @@ async def create_job(payload: JobCreateRequest) -> dict[str, Any]:
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Please enter a note title.")
+    profile = _resolve_profile(payload.profile_id)
     job_id = uuid.uuid4().hex
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     log_path = JOBS_DIR / f"{job_id}.log"
@@ -85,6 +98,10 @@ async def create_job(payload: JobCreateRequest) -> dict[str, Any]:
         source=source,
         title=title,
         log_path=log_path,
+        profile_id=profile.id,
+        profile_display_name=profile.display_name,
+        prompt_profile=profile.effective_prompt_profile,
+        output_folder=str(profile.output_folder),
     )
     JOBS[job_id] = record
     _persist_job(record)
@@ -136,7 +153,8 @@ async def _run_job(record: JobRecord) -> None:
     record.status = "running"
     record.updated_at = datetime.now(timezone.utc).isoformat()
     _persist_job(record)
-    command = _build_command(record.source, record.title)
+    profile = _resolve_profile(record.profile_id)
+    command = _build_command(record.source, record.title, profile)
     _write_log_header(record, command)
     env = os.environ.copy()
     env["PYTHONPATH"] = _merge_pythonpath(env.get("PYTHONPATH"))
@@ -215,9 +233,14 @@ async def _cancel_job(record: JobRecord) -> None:
     _persist_job(record)
 
 
-def _build_command(source: str, title: str | None) -> list[str]:
+def _build_command(
+    source: str,
+    title: str | None,
+    profile: KnowledgeProductProfile | None = None,
+) -> list[str]:
     """Build the v1.3.2 CLI command with Wonderland defaults."""
 
+    selected_profile = profile or PROFILE_REGISTRY.get(DEFAULT_PROFILE_ID)
     command = [
         str(_python_executable()),
         "scripts/run_full_course_pipeline.py",
@@ -226,9 +249,9 @@ def _build_command(source: str, title: str | None) -> list[str]:
         "--source-type",
         "auto",
         "--profile",
-        "finance",
+        selected_profile.effective_prompt_profile,
         "--tags",
-        DEFAULT_TAGS,
+        ",".join(selected_profile.tags),
         "--model-size",
         "small",
         "--language",
@@ -266,6 +289,10 @@ def _job_payload(record: JobRecord) -> dict[str, Any]:
         "error": record.error,
         "log_path": str(record.log_path),
         "pid": record.pid,
+        "profile_id": record.profile_id,
+        "profile_display_name": record.profile_display_name,
+        "prompt_profile": record.prompt_profile,
+        "output_folder": record.output_folder,
     }
 
 
@@ -327,7 +354,18 @@ def _record_from_history(item: dict[str, Any]) -> JobRecord:
         obsidian_note_path=item.get("obsidian_note_path"),
         error=item.get("error"),
         pid=item.get("pid"),
+        profile_id=str(item.get("profile_id", DEFAULT_PROFILE_ID)),
+        profile_display_name=str(item.get("profile_display_name", "Finance")),
+        prompt_profile=str(item.get("prompt_profile", "finance")),
+        output_folder=str(item.get("output_folder", "AI Knowledge Pipeline/finance")),
     )
+
+
+def _resolve_profile(profile_id: str | None) -> KnowledgeProductProfile:
+    try:
+        return PROFILE_REGISTRY.get(profile_id)
+    except UnknownProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _write_log_header(record: JobRecord, command: list[str]) -> None:
@@ -340,6 +378,8 @@ def _write_log_header(record: JobRecord, command: list[str]) -> None:
                 f"created_at: {record.created_at}",
                 f"source: {record.source}",
                 f"title: {record.title or ''}",
+                f"profile: {record.profile_display_name} ({record.profile_id})",
+                f"output_folder: {record.output_folder}",
                 "Running full course pipeline",
                 "Detecting source",
                 "Extracting audio",

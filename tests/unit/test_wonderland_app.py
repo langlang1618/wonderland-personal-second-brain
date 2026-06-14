@@ -18,6 +18,11 @@ def test_wonderland_home_renders_product_page() -> None:
     assert "Turn courses, videos, audio and links into Obsidian knowledge notes." in response.text
     assert 'id="title"' in response.text
     assert "Give your note a clear title" in response.text
+    assert "Knowledge Profile" in response.text
+    assert '<option value="finance" selected>Finance</option>' in response.text
+    assert "Metaphysics / Ziwei Bazi" in response.text
+    assert "AI / Tech" in response.text
+    assert "General" in response.text
     assert "Show Logs" in response.text
     assert "Recent Jobs" in response.text
     assert 'id="recent-jobs-list"' in response.text
@@ -45,6 +50,9 @@ def test_wonderland_create_job_uses_existing_full_runner_command(monkeypatch, tm
     payload = response.json()
     job = wonderland.JOBS[payload["job_id"]]
     assert job.status == "queued"
+    assert job.profile_id == "finance"
+    assert job.profile_display_name == "Finance"
+    assert job.output_folder == "AI Knowledge Pipeline/finance"
     assert job.log_path == tmp_path / "jobs" / f"{job.job_id}.log"
     command = wonderland._build_command(job.source, job.title)
     assert command[1:] == [
@@ -71,6 +79,66 @@ def test_wonderland_create_job_uses_existing_full_runner_command(monkeypatch, tm
     ]
 
 
+def test_wonderland_create_job_uses_selected_metaphysics_profile(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    wonderland.JOBS.clear()
+    monkeypatch.setattr(wonderland, "JOBS_DIR", tmp_path / "jobs")
+
+    def fake_create_background_task(coro):
+        coro.close()
+        return None
+
+    monkeypatch.setattr(wonderland, "_create_background_task", fake_create_background_task)
+    client = TestClient(wonderland.app)
+
+    response = client.post(
+        "/api/jobs",
+        json={
+            "source": "/tmp/course.ts",
+            "title": "紫微课程",
+            "profile_id": "metaphysics",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    job = wonderland.JOBS[payload["job_id"]]
+    assert job.profile_id == "metaphysics"
+    assert job.profile_display_name == "Metaphysics / Ziwei Bazi"
+    assert job.prompt_profile == "ai"
+    assert job.output_folder == "AI Knowledge Pipeline/metaphysics"
+    command = wonderland._build_command(
+        job.source,
+        job.title,
+        wonderland.PROFILE_REGISTRY.get(job.profile_id),
+    )
+    assert "--profile" in command
+    assert command[command.index("--profile") + 1] == "ai"
+    assert command[command.index("--tags") + 1] == (
+        "metaphysics,ziwei,bazi,course,wonderland"
+    )
+    history = json.loads((tmp_path / "jobs" / "history.json").read_text(encoding="utf-8"))
+    assert history[0]["profile_id"] == "metaphysics"
+    assert history[0]["profile_display_name"] == "Metaphysics / Ziwei Bazi"
+    assert history[0]["output_folder"] == "AI Knowledge Pipeline/metaphysics"
+
+
+def test_wonderland_create_job_rejects_unknown_profile(monkeypatch, tmp_path) -> None:
+    wonderland.JOBS.clear()
+    monkeypatch.setattr(wonderland, "JOBS_DIR", tmp_path / "jobs")
+    client = TestClient(wonderland.app)
+
+    response = client.post(
+        "/api/jobs",
+        json={"source": "/tmp/course.mp4", "title": "课程A", "profile_id": "unknown"},
+    )
+
+    assert response.status_code == 400
+    assert "Unknown knowledge profile 'unknown'" in response.json()["detail"]
+
+
 def test_wonderland_create_job_writes_history_json(monkeypatch, tmp_path) -> None:
     wonderland.JOBS.clear()
     monkeypatch.setattr(wonderland, "JOBS_DIR", tmp_path / "jobs")
@@ -94,6 +162,9 @@ def test_wonderland_create_job_writes_history_json(monkeypatch, tmp_path) -> Non
     assert history[0]["status"] == "queued"
     assert history[0]["source"] == "/tmp/course.mp4"
     assert history[0]["title"] == "课程A"
+    assert history[0]["profile_id"] == "finance"
+    assert history[0]["profile_display_name"] == "Finance"
+    assert history[0]["output_folder"] == "AI Knowledge Pipeline/finance"
     assert history[0]["log_path"].endswith(".log")
     assert "pid" in history[0]
 
@@ -119,6 +190,8 @@ def test_wonderland_list_jobs_returns_history(monkeypatch, tmp_path) -> None:
     assert response.json()[0]["job_id"] == "job-1"
     assert response.json()[0]["status"] == "running"
     assert response.json()[0]["pid"] == 123
+    assert response.json()[0]["profile_display_name"] == "Finance"
+    assert response.json()[0]["output_folder"] == "AI Knowledge Pipeline/finance"
 
 
 def test_wonderland_running_job_can_be_restored_from_history(monkeypatch, tmp_path) -> None:

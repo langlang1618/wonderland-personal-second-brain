@@ -1,6 +1,7 @@
 const form = document.querySelector("#job-form");
 const sourceInput = document.querySelector("#source");
 const titleInput = document.querySelector("#title");
+const profileSelect = document.querySelector("#profile");
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
 const statusText = document.querySelector("#status");
@@ -27,6 +28,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const source = sourceInput.value.trim();
   const title = titleInput.value.trim();
+  const profileId = profileSelect.value || "finance";
   if (!source) {
     showValidationMessage("Please enter a source link or local file path.");
     sourceInput.focus();
@@ -48,7 +50,7 @@ form.addEventListener("submit", async (event) => {
     const response = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, title }),
+      body: JSON.stringify({ source, title, profile_id: profileId }),
     });
     const payload = await response.json();
     if (!response.ok) {
@@ -150,6 +152,7 @@ async function restoreLatestJob() {
       jobIdText.textContent = activeJobId;
       sourceInput.value = latestJob.source || sourceInput.value;
       titleInput.value = latestJob.title || titleInput.value;
+      profileSelect.value = latestJob.profile_id || profileSelect.value;
       setStatus(displayStatus(latestJob.status), stateName(latestJob.status));
       setRunningControls(true);
       await refreshJob();
@@ -242,7 +245,7 @@ function renderRecentJobItem(job) {
   title.textContent = job.title || "Untitled";
 
   const meta = document.createElement("span");
-  meta.textContent = `${displayStatus(job.status)} · ${formatDate(job.created_at)}`;
+  meta.textContent = `${job.profile_display_name || "Finance"} / ${displayStatus(job.status)} · ${formatDate(job.created_at)}`;
 
   main.append(title, meta);
   item.append(main);
@@ -263,6 +266,7 @@ function renderRecentJobItem(job) {
     jobIdText.textContent = activeJobId;
     sourceInput.value = job.source || sourceInput.value;
     titleInput.value = job.title || titleInput.value;
+    profileSelect.value = job.profile_id || profileSelect.value;
     logPanel.classList.remove("is-collapsed");
     logToggle.textContent = "Hide Logs";
     refreshJob();
