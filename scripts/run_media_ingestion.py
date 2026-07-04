@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Protocol, Sequence
 from urllib.parse import urlparse
 
+from ai_knowledge_pipeline.infra.runtime_logging import (
+    STAGE_AUDIO_CHUNKING,
+    STAGE_AUDIO_EXTRACTION,
+    RuntimeLogger,
+    create_runtime_logger,
+)
 from ai_knowledge_pipeline.modules.chunking.runner import SubprocessFfmpegRunner
 from ai_knowledge_pipeline.modules.chunking.types import (
     ChunkProcessResult,
@@ -136,15 +142,19 @@ def run_media_ingestion(
     *,
     ytdlp_runner: YtDlpRunner | None = None,
     ffmpeg_runner: FfmpegRunner | None = None,
+    logger: RuntimeLogger | None = None,
 ) -> MediaIngestionBatchResult:
     """Run media ingestion for one or more m3u8 URLs."""
 
+    runtime_logger = logger or create_runtime_logger()
     ytdlp_runner = ytdlp_runner or SubprocessYtDlpRunner()
     ffmpeg_runner = ffmpeg_runner or SubprocessFfmpegRunner()
     items: list[MediaIngestionItemResult] = []
     for index, url in enumerate(request.urls, start=1):
         plan = _build_plan(request, url, index)
+        runtime_logger.info(f"Media item {index} / {len(request.urls)}: {plan.title}")
         if request.dry_run:
+            runtime_logger.info(f"dry-run: planned media ingestion for {plan.title}")
             item = MediaIngestionItemResult(
                 index=index,
                 plan=plan,
@@ -155,6 +165,7 @@ def run_media_ingestion(
             continue
 
         if request.skip_existing and _has_existing_outputs(plan, request.audio_format):
+            runtime_logger.info(f"skip_existing: using existing media outputs: {plan.course_dir}")
             item = MediaIngestionItemResult(
                 index=index,
                 plan=plan,
@@ -171,6 +182,7 @@ def run_media_ingestion(
             request=request,
             ytdlp_runner=ytdlp_runner,
             ffmpeg_runner=ffmpeg_runner,
+            logger=runtime_logger,
         )
         _write_manifest(plan, item)
         items.append(item)
@@ -224,15 +236,18 @@ def _materialize_item(
     request: MediaIngestionRequest,
     ytdlp_runner: YtDlpRunner,
     ffmpeg_runner: FfmpegRunner,
+    logger: RuntimeLogger,
 ) -> MediaIngestionItemResult:
     plan.raw_audio_dir.mkdir(parents=True, exist_ok=True)
     plan.chunks_dir.mkdir(parents=True, exist_ok=True)
 
-    download_result = ytdlp_runner.run(
-        plan.download_command,
-        MediaDownloadConfig(ytdlp_binary=plan.download_command[0]),
-    )
+    with logger.stage(STAGE_AUDIO_EXTRACTION):
+        download_result = ytdlp_runner.run(
+            plan.download_command,
+            MediaDownloadConfig(ytdlp_binary=plan.download_command[0]),
+        )
     if download_result.returncode != 0:
+        logger.error(f"{STAGE_AUDIO_EXTRACTION} failed: {_excerpt(download_result.output.stderr)}")
         return MediaIngestionItemResult(
             index=index,
             plan=plan,
@@ -240,11 +255,15 @@ def _materialize_item(
             errors=(f"yt-dlp failed: {_excerpt(download_result.output.stderr)}",),
         )
 
-    chunk_result = ffmpeg_runner.run(
-        plan.chunk_command,
-        MediaChunkingConfig(ffmpeg_binary=plan.chunk_command[0]),
-    )
+    with logger.stage(STAGE_AUDIO_CHUNKING) as stage:
+        chunk_result = ffmpeg_runner.run(
+            plan.chunk_command,
+            MediaChunkingConfig(ffmpeg_binary=plan.chunk_command[0]),
+        )
+        chunk_paths = _chunk_paths(plan, request.audio_format)
+        stage.progress(f"chunks: {len(chunk_paths)}")
     if chunk_result.returncode != 0:
+        logger.error(f"{STAGE_AUDIO_CHUNKING} failed: {_excerpt(chunk_result.output.stderr)}")
         return MediaIngestionItemResult(
             index=index,
             plan=plan,
@@ -252,7 +271,6 @@ def _materialize_item(
             errors=(f"ffmpeg failed: {_excerpt(chunk_result.output.stderr)}",),
         )
 
-    chunk_paths = _chunk_paths(plan, request.audio_format)
     return MediaIngestionItemResult(
         index=index,
         plan=plan,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import re
 import shutil
 import sys
@@ -13,6 +14,14 @@ from pathlib import Path
 from typing import Callable, Protocol, Sequence
 from urllib.parse import urlparse
 
+from ai_knowledge_pipeline.infra.runtime_logging import (
+    STAGE_AUDIO_CHUNKING,
+    STAGE_AUDIO_EXTRACTION,
+    STAGE_PROFILE_LOADING,
+    RuntimeLogger,
+    create_runtime_logger,
+    print_pipeline_summary,
+)
 from ai_knowledge_pipeline.modules.chunking.runner import SubprocessFfmpegRunner
 from ai_knowledge_pipeline.modules.chunking.types import (
     ChunkCommand,
@@ -166,14 +175,21 @@ def run_full_course_pipeline(
     whisper_runner: WhisperRunner = run_local_whisper_transcription,
     course_runner: CourseRunner = run_real_course_pipeline,
     ffmpeg_runner: FfmpegRunner | None = None,
+    logger: RuntimeLogger | None = None,
 ) -> FullCoursePipelineResult:
     """Run one URL-like source through the complete local-first course pipeline."""
 
-    resolved_type = _resolve_source_type(request.source, request.source_type)
-    title = _resolve_title(request.source, request.title)
-    cleanup_policy = _parse_cleanup(request.cleanup)
+    runtime_logger = logger or create_runtime_logger()
+    runtime_logger.info("Pipeline started")
+    with runtime_logger.stage(STAGE_PROFILE_LOADING):
+        resolved_type = _resolve_source_type(request.source, request.source_type)
+        title = _resolve_title(request.source, request.title)
+        cleanup_policy = _parse_cleanup(request.cleanup)
+        runtime_logger.info(f"Profile: {request.profile}")
+        runtime_logger.info(f"Source type: {resolved_type.value}")
     if resolved_type in {FullCourseSourceType.M3U8, FullCourseSourceType.WEBPAGE}:
-        media_result = media_ingestion_runner(
+        media_result = _run_with_optional_logger(
+            media_ingestion_runner,
             MediaIngestionRequest(
                 urls=(request.source,),
                 output_dir=request.output_dir,
@@ -181,7 +197,8 @@ def run_full_course_pipeline(
                 chunk_minutes=request.chunk_minutes,
                 dry_run=request.dry_run,
                 skip_existing=request.skip_existing,
-            )
+            ),
+            runtime_logger,
         )
         media_item = _single_media_item(media_result)
         course_dir = media_item.plan.course_dir
@@ -198,6 +215,7 @@ def run_full_course_pipeline(
             title=title,
             source_type=resolved_type,
             ffmpeg_runner=ffmpeg_runner or SubprocessFfmpegRunner(),
+            logger=runtime_logger,
         )
         course_dir = local_result.course_dir
         raw_audio_path = local_result.raw_audio_path
@@ -232,20 +250,28 @@ def run_full_course_pipeline(
     merged_path = _existing_merged_transcript_path(transcript_dir, request.skip_existing)
     if merged_path is None:
         try:
-            whisper_result = whisper_runner(
+            whisper_result = _run_with_optional_logger(
+                whisper_runner,
                 LocalWhisperRuntimeRequest(
                     chunks_dir=chunks_dir,
                     output_dir=transcript_dir,
                     model_size=request.model_size,
                     language=request.language,
                     merge=True,
-                )
+                ),
+                runtime_logger,
             )
         except LocalWhisperRuntimeError as exc:
             raise FullCoursePipelineError(f"Whisper transcription failed: {exc}") from exc
-        if whisper_result.errors:
+        if whisper_result.errors and whisper_result.chunk_transcripts:
+            runtime_logger.warning(
+                f"Whisper transcription completed with warnings: "
+                f"{'; '.join(whisper_result.errors)}"
+            )
+        if whisper_result.errors and not whisper_result.chunk_transcripts:
             raise FullCoursePipelineError(
-                f"Whisper transcription produced errors: {'; '.join(whisper_result.errors)}"
+                "Whisper transcription produced no usable transcript text: "
+                f"{'; '.join(whisper_result.errors)}"
             )
         merged_path = whisper_result.merged_transcript_path
         if merged_path is None or not merged_path.exists():
@@ -253,11 +279,12 @@ def run_full_course_pipeline(
                 "Whisper transcription did not produce merged_transcript.txt."
             )
     else:
-        print(f"skip_existing: using existing merged transcript: {merged_path}")
+        runtime_logger.info(f"skip_existing: using existing merged transcript: {merged_path}")
 
     vault_path = _resolve_vault_path(request)
     try:
-        course_result = course_runner(
+        course_result = _run_with_optional_logger(
+            course_runner,
             RealCoursePipelineRequest(
                 local_transcript_path=merged_path,
                 obsidian_vault_path=vault_path,
@@ -266,7 +293,8 @@ def run_full_course_pipeline(
                 model=request.model,
                 profile=request.profile,
                 env_path=request.env_path,
-            )
+            ),
+            runtime_logger,
         )
     except RealCoursePipelineError as exc:
         raise FullCoursePipelineError(f"Transcript-to-Obsidian failed: {exc}") from exc
@@ -318,13 +346,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         dry_run=args.dry_run,
         cleanup=args.cleanup,
     )
+    runtime_logger = create_runtime_logger()
     try:
-        result = run_full_course_pipeline(request)
+        result = run_full_course_pipeline(request, logger=runtime_logger)
     except FullCoursePipelineError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     _print_result(result)
+    if not result.dry_run:
+        print_pipeline_summary(
+            runtime_logger,
+            profile=request.profile.value,
+            course=result.title,
+            chunks=_result_chunk_count(result),
+        )
     return 0
 
 
@@ -387,12 +423,28 @@ def _single_media_item(media_result: MediaIngestionBatchResult):
     return item
 
 
+def _run_with_optional_logger(runner, request, logger: RuntimeLogger):
+    """Call a runner with the shared logger when its signature supports it."""
+
+    signature = inspect.signature(runner)
+    parameters = signature.parameters.values()
+    supports_logger = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        or parameter.name == "logger"
+        for parameter in parameters
+    )
+    if supports_logger:
+        return runner(request, logger=logger)
+    return runner(request)
+
+
 def _run_local_media_ingestion(
     request: FullCoursePipelineRequest,
     *,
     title: str,
     source_type: FullCourseSourceType,
     ffmpeg_runner: FfmpegRunner,
+    logger: RuntimeLogger,
 ) -> LocalMediaIngestionResult:
     source_path = Path(request.source).expanduser()
     _validate_local_source(source_path, source_type)
@@ -415,6 +467,7 @@ def _run_local_media_ingestion(
     if request.skip_existing and raw_audio_path.exists():
         existing_chunks = _chunk_paths(chunks_dir)
         if existing_chunks:
+            logger.info(f"skip_existing: using existing audio chunks: {chunks_dir}")
             return LocalMediaIngestionResult(
                 course_dir=course_dir,
                 raw_audio_path=raw_audio_path,
@@ -424,27 +477,30 @@ def _run_local_media_ingestion(
 
     raw_audio_dir.mkdir(parents=True, exist_ok=True)
     chunks_dir.mkdir(parents=True, exist_ok=True)
-    if source_type is FullCourseSourceType.LOCAL_AUDIO:
-        _copy_or_normalize_local_audio(
-            source_path=source_path,
+    with logger.stage(STAGE_AUDIO_EXTRACTION):
+        if source_type is FullCourseSourceType.LOCAL_AUDIO:
+            _copy_or_normalize_local_audio(
+                source_path=source_path,
+                raw_audio_path=raw_audio_path,
+                skip_existing=request.skip_existing,
+            )
+        else:
+            _extract_audio_from_local_video(
+                source_path=source_path,
+                raw_audio_path=raw_audio_path,
+                ffmpeg_runner=ffmpeg_runner,
+                skip_existing=request.skip_existing,
+            )
+
+    with logger.stage(STAGE_AUDIO_CHUNKING) as stage:
+        chunk_paths = _chunk_local_audio(
             raw_audio_path=raw_audio_path,
-            skip_existing=request.skip_existing,
-        )
-    else:
-        _extract_audio_from_local_video(
-            source_path=source_path,
-            raw_audio_path=raw_audio_path,
+            chunks_dir=chunks_dir,
+            chunk_minutes=request.chunk_minutes,
             ffmpeg_runner=ffmpeg_runner,
             skip_existing=request.skip_existing,
         )
-
-    chunk_paths = _chunk_local_audio(
-        raw_audio_path=raw_audio_path,
-        chunks_dir=chunks_dir,
-        chunk_minutes=request.chunk_minutes,
-        ffmpeg_runner=ffmpeg_runner,
-        skip_existing=request.skip_existing,
-    )
+        stage.progress(f"chunks: {len(chunk_paths)}")
     return LocalMediaIngestionResult(
         course_dir=course_dir,
         raw_audio_path=raw_audio_path,
@@ -776,6 +832,12 @@ def _print_result(result: FullCoursePipelineResult) -> None:
             print(f"  - {item}")
     else:
         print("cleanup_skipped: []")
+
+
+def _result_chunk_count(result: FullCoursePipelineResult) -> int:
+    if result.chunks_dir is None or not result.chunks_dir.exists():
+        return 0
+    return len(tuple(result.chunks_dir.glob(f"chunk_*.{OUTPUT_AUDIO_FORMAT}")))
 
 
 def _display_source(source: str, limit: int = 90) -> str:

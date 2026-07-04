@@ -21,6 +21,11 @@ from ai_knowledge_pipeline.core.artifact import (
     ArtifactVersion,
 )
 from ai_knowledge_pipeline.core.runtime import ArtifactKind
+from ai_knowledge_pipeline.infra.runtime_logging import (
+    STAGE_WHISPER_TRANSCRIPTION,
+    RuntimeLogger,
+    create_runtime_logger,
+)
 from ai_knowledge_pipeline.modules.chunking import (
     MediaChunkArtifact,
     MediaChunkingStatus,
@@ -33,6 +38,7 @@ from ai_knowledge_pipeline.modules.transcription import (
     TranscriptArtifact,
     TranscriptMerger,
     TranscriptionConfig,
+    TranscriptionErrorCode,
     TranscriptionProviderKind,
     TranscriptionRequest,
     create_default_transcriber,
@@ -70,9 +76,11 @@ class LocalWhisperRuntimeError(RuntimeError):
 def run_local_whisper_transcription(
     request: LocalWhisperRuntimeRequest,
     provider: FasterWhisperProvider | None = None,
+    logger: RuntimeLogger | None = None,
 ) -> LocalWhisperRuntimeResult:
     """Transcribe each chunk file and optionally merge transcripts."""
 
+    runtime_logger = logger or create_runtime_logger()
     model_size = _model_size(request.model_size)
     chunk_paths = scan_chunk_files(request.chunks_dir)
     if not chunk_paths:
@@ -88,32 +96,52 @@ def run_local_whisper_transcription(
     chunk_transcripts: list[ChunkTranscriptArtifact] = []
     errors: list[str] = []
 
-    for index, chunk_path in enumerate(chunk_paths, start=1):
-        chunk = _chunk_artifact(chunk_path, index, len(chunk_paths), request.chunks_dir)
-        result = transcriber.transcribe(
-            TranscriptionRequest(
-                chunk=chunk,
-                config=TranscriptionConfig(
-                    raw_transcripts_dir=request.output_dir,
-                    provider=TranscriptionProviderKind.FASTER_WHISPER,
-                    language=request.language,
-                    model_name=model_size.value,
-                ),
-                task_id=f"local-whisper-{index:03d}",
+    with runtime_logger.stage(STAGE_WHISPER_TRANSCRIPTION):
+        total_chunks = len(chunk_paths)
+        for index, chunk_path in enumerate(chunk_paths, start=1):
+            with runtime_logger.chunk(
+                STAGE_WHISPER_TRANSCRIPTION,
+                chunk_index=index,
+                total_chunks=total_chunks,
+                chunk_name=chunk_path.name,
+            ):
+                chunk = _chunk_artifact(chunk_path, index, total_chunks, request.chunks_dir)
+                result = transcriber.transcribe(
+                    TranscriptionRequest(
+                        chunk=chunk,
+                        config=TranscriptionConfig(
+                            raw_transcripts_dir=request.output_dir,
+                            provider=TranscriptionProviderKind.FASTER_WHISPER,
+                            language=request.language,
+                            model_name=model_size.value,
+                        ),
+                        task_id=f"local-whisper-{index:03d}",
+                    )
             )
-        )
-        if not result.is_success or result.transcript is None:
-            errors.append(f"{chunk_path}: {result.issues}")
-            continue
-        text_path = request.output_dir / f"chunk_{index:03d}.txt"
-        text_path.write_text(result.transcript.text + "\n", encoding="utf-8")
-        chunk_transcripts.append(
-            ChunkTranscriptArtifact(
-                transcript=result.transcript,
-                text_path=text_path,
-                metadata={"chunk_path": str(chunk_path)},
+            if not result.is_success or result.transcript is None:
+                if _is_empty_transcript_result(result):
+                    warning = _empty_chunk_warning(index, total_chunks)
+                    runtime_logger.warning(warning)
+                    errors.append(f"{chunk_path}: {warning}")
+                    continue
+                error = f"{chunk_path}: {result.issues}"
+                runtime_logger.warning(error)
+                errors.append(error)
+                continue
+            if not result.transcript.text.strip():
+                warning = _empty_chunk_warning(index, total_chunks)
+                runtime_logger.warning(warning)
+                errors.append(f"{chunk_path}: {warning}")
+                continue
+            text_path = request.output_dir / f"chunk_{index:03d}.txt"
+            text_path.write_text(result.transcript.text + "\n", encoding="utf-8")
+            chunk_transcripts.append(
+                ChunkTranscriptArtifact(
+                    transcript=result.transcript,
+                    text_path=text_path,
+                    metadata={"chunk_path": str(chunk_path)},
+                )
             )
-        )
 
     merged_path = None
     if request.merge and chunk_transcripts:
@@ -153,6 +181,21 @@ def scan_chunk_files(chunks_dir: Path) -> tuple[Path, ...]:
     )
 
 
+def _is_empty_transcript_result(result) -> bool:
+    return any(
+        issue.code is TranscriptionErrorCode.INVALID_PROVIDER_RESULT
+        and "no transcript text" in issue.message.lower()
+        for issue in result.issues
+    )
+
+
+def _empty_chunk_warning(index: int, total_chunks: int) -> str:
+    return (
+        f"{STAGE_WHISPER_TRANSCRIPTION} | "
+        f"Chunk {index} / {total_chunks} returned empty transcript; skipped."
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
@@ -175,7 +218,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if result.errors:
         for error in result.errors:
             print(f"Error: {error}", file=sys.stderr)
-        return 1
+        if not result.chunk_transcripts:
+            return 1
     return 0
 
 

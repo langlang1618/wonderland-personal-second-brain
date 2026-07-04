@@ -203,18 +203,18 @@ async def _run_job(record: JobRecord) -> None:
         return
     if returncode == 0:
         record.status = "success"
-        _append_log(record.log_path, "\nCompleted\n")
+        _append_log(record.log_path, "\n[SUCCESS] Completed\n")
     else:
         record.status = "failed"
         record.error = f"Command exited with code {returncode}"
-        _append_log(record.log_path, f"\nFailed with exit code {returncode}\n")
+        _append_log(record.log_path, f"\n[ERROR] Failed with exit code {returncode}\n")
     _persist_job(record)
 
 
 async def _cancel_job(record: JobRecord) -> None:
     """Terminate a running job process and persist cancelled state."""
 
-    _append_log(record.log_path, "\nCancelled by user\n")
+    _append_log(record.log_path, "\n[WARNING] Cancelled by user\n")
     process = record.process
     if process is not None and process.returncode is None:
         process.terminate()
@@ -225,7 +225,10 @@ async def _cancel_job(record: JobRecord) -> None:
             await process.wait()
         record.returncode = process.returncode
     elif record.pid is not None:
-        _append_log(record.log_path, "Process handle unavailable; status marked cancelled.\n")
+        _append_log(
+            record.log_path,
+            "[WARNING] Process handle unavailable; status marked cancelled.\n",
+        )
     record.status = "cancelled"
     record.error = "Cancelled by user"
     record.updated_at = datetime.now(timezone.utc).isoformat()
@@ -373,21 +376,15 @@ def _write_log_header(record: JobRecord, command: list[str]) -> None:
         record.log_path,
         "\n".join(
             [
-                "Starting Wonderland job",
-                f"job_id: {record.job_id}",
-                f"created_at: {record.created_at}",
-                f"source: {record.source}",
-                f"title: {record.title or ''}",
-                f"profile: {record.profile_display_name} ({record.profile_id})",
-                f"output_folder: {record.output_folder}",
-                "Running full course pipeline",
-                "Detecting source",
-                "Extracting audio",
-                "Chunking audio",
-                "Transcribing",
-                "Cleaning transcript",
-                "Writing Obsidian note",
-                f"command: {_redacted_command(command)}",
+                "[INFO] Starting Wonderland job",
+                f"[INFO] job_id: {record.job_id}",
+                f"[INFO] created_at: {record.created_at}",
+                f"[INFO] source: {record.source}",
+                f"[INFO] title: {record.title or ''}",
+                f"[INFO] profile: {record.profile_display_name} ({record.profile_id})",
+                f"[INFO] output_folder: {record.output_folder}",
+                "[INFO] Running full course pipeline",
+                f"[INFO] command: {_redacted_command(command)}",
                 "",
             ]
         ),

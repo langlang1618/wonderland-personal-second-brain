@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ai_knowledge_pipeline.infra.runtime_logging import create_runtime_logger
 from ai_knowledge_pipeline.modules.chunking.types import (
     ChunkProcessOutput,
     ChunkProcessResult,
@@ -288,6 +289,55 @@ def test_full_course_pipeline_orchestrates_existing_runners_in_order(tmp_path) -
     assert result.merged_transcript_path == transcript_dir / "merged_transcript.txt"
     assert result.obsidian_note_path == note_path
     assert result.cleanup == "none"
+
+
+def test_full_course_pipeline_passes_shared_logger_to_supported_runners(tmp_path) -> None:
+    logger = create_runtime_logger()
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    transcript_dir = tmp_path / "transcripts"
+
+    def fake_media_runner(request, logger):
+        with logger.stage("Audio Extraction"):
+            pass
+        return _media_result(tmp_path)
+
+    def fake_whisper_runner(request, logger):
+        with logger.stage("Whisper Transcription"):
+            pass
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("merged transcript", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    def fake_course_runner(request, logger):
+        with logger.stage("Markdown Generation"):
+            pass
+        return SimpleNamespace(obsidian_note_path=vault_path / "note.md")
+
+    run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source="https://example.com/course.m3u8",
+            title="课程A",
+            vault_path=vault_path,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=transcript_dir,
+        ),
+        media_ingestion_runner=fake_media_runner,
+        whisper_runner=fake_whisper_runner,
+        course_runner=fake_course_runner,
+        logger=logger,
+    )
+
+    stage_names = [metric.stage_name for metric in logger.metrics.stage_metrics()]
+    assert "Profile Loading" in stage_names
+    assert "Audio Extraction" in stage_names
+    assert "Whisper Transcription" in stage_names
+    assert "Markdown Generation" in stage_names
 
 
 def test_full_course_pipeline_local_audio_orchestrates_to_whisper_and_obsidian(tmp_path) -> None:
@@ -593,6 +643,74 @@ def test_full_course_pipeline_skip_existing_reuses_merged_transcript_without_whi
     assert result.obsidian_note_path == tmp_path / "note.md"
 
 
+def test_full_course_pipeline_continues_when_whisper_has_partial_warnings(
+    tmp_path,
+) -> None:
+    calls: list[str] = []
+    transcript_dir = tmp_path / "transcripts"
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+
+    def fake_whisper_runner(request, logger):
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("usable transcript", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(SimpleNamespace(text_path=request.output_dir / "chunk_001.txt"),),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+            errors=("chunk_002.mp3: empty transcript",),
+        )
+
+    def fake_course_runner(request, logger):
+        calls.append("course")
+        assert request.local_transcript_path == transcript_dir / "merged_transcript.txt"
+        return SimpleNamespace(obsidian_note_path=vault_path / "note.md")
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source="https://example.com/course.m3u8",
+            title="课程A",
+            vault_path=vault_path,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=transcript_dir,
+        ),
+        media_ingestion_runner=lambda request: _media_result(tmp_path, chunk_count=2),
+        whisper_runner=fake_whisper_runner,
+        course_runner=fake_course_runner,
+    )
+
+    assert calls == ["course"]
+    assert result.obsidian_note_path == vault_path / "note.md"
+
+
+def test_full_course_pipeline_fails_when_whisper_produces_no_usable_text(
+    tmp_path,
+) -> None:
+    def fake_whisper_runner(request, logger):
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=None,
+            manifest_path=request.output_dir / "manifest.json",
+            errors=("chunk_001.mp3: empty transcript", "chunk_002.mp3: empty transcript"),
+        )
+
+    with pytest.raises(FullCoursePipelineError) as exc:
+        run_full_course_pipeline(
+            FullCoursePipelineRequest(
+                source="https://example.com/course.m3u8",
+                title="课程A",
+                vault_path=tmp_path,
+                output_dir=tmp_path / "media",
+                transcript_output_dir=tmp_path / "transcripts",
+            ),
+            media_ingestion_runner=lambda request: _media_result(tmp_path, chunk_count=2),
+            whisper_runner=fake_whisper_runner,
+        )
+
+    assert "Whisper transcription produced no usable transcript text" in str(exc.value)
+
+
 def test_full_course_pipeline_local_video_ffmpeg_failure_reports_error(tmp_path) -> None:
     source = tmp_path / "course.mp4"
     source.write_text("video", encoding="utf-8")
@@ -744,14 +862,17 @@ def test_full_course_pipeline_reports_missing_chunks(tmp_path) -> None:
 
 def test_full_course_pipeline_main_prints_obsidian_note_path(monkeypatch, tmp_path, capsys) -> None:
     note_path = tmp_path / "vault" / "note.md"
+    chunks_dir = tmp_path / "media" / "课程a" / "chunks"
+    chunks_dir.mkdir(parents=True)
+    (chunks_dir / "chunk_001.mp3").write_text("chunk", encoding="utf-8")
 
-    def fake_runner(request):
+    def fake_runner(request, **kwargs):
         return SimpleNamespace(
             title="课程A",
             source_type=FullCourseSourceType.M3U8,
             course_dir=tmp_path / "media" / "课程a",
             raw_audio_path=tmp_path / "media" / "课程a" / "raw_audio" / "course.mp3",
-            chunks_dir=tmp_path / "media" / "课程a" / "chunks",
+            chunks_dir=chunks_dir,
             transcript_dir=tmp_path / "transcripts",
             merged_transcript_path=tmp_path / "transcripts" / "merged_transcript.txt",
             obsidian_note_path=note_path,
@@ -784,6 +905,9 @@ def test_full_course_pipeline_main_prints_obsidian_note_path(monkeypatch, tmp_pa
     assert exit_code == 0
     assert "obsidian_note_path:" in captured.out
     assert str(note_path) in captured.out
+    assert "Wonderland Pipeline Summary" in captured.out
+    assert "Course\n课程A" in captured.out
+    assert "Chunks\n1" in captured.out
 
 
 def _media_result(

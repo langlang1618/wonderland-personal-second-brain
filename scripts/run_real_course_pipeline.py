@@ -23,6 +23,14 @@ from ai_knowledge_pipeline.core.artifact import (
     IntegrityAlgorithm,
 )
 from ai_knowledge_pipeline.core.runtime import ArtifactKind
+from ai_knowledge_pipeline.infra.runtime_logging import (
+    STAGE_DEEPSEEK_CLEANING,
+    STAGE_MARKDOWN_GENERATION,
+    STAGE_PROFILE_LOADING,
+    STAGE_SAVE_OUTPUT,
+    RuntimeLogger,
+    create_runtime_logger,
+)
 from ai_knowledge_pipeline.modules.chunking import (
     MediaChunkArtifact,
     MediaChunkingStatus,
@@ -109,15 +117,19 @@ class RealCoursePipelineError(RuntimeError):
 def run_real_course_pipeline(
     request: RealCoursePipelineRequest,
     cleaning_provider: TranscriptCleaningProvider | None = None,
+    logger: RuntimeLogger | None = None,
 ) -> RealCoursePipelineResult:
     """Run one local transcript through cleaning, Markdown, and Obsidian."""
 
+    runtime_logger = logger or create_runtime_logger()
     _validate_request(request, require_api_key=cleaning_provider is None)
     chunk = _create_transcript_backed_chunk(request)
     transcript = _import_local_transcript(request, chunk)
-    cleaned = _clean_transcript(request, transcript, cleaning_provider)
-    markdown = _generate_markdown(request, cleaned)
-    note = _write_obsidian_note(request, markdown)
+    cleaned = _clean_transcript(request, transcript, cleaning_provider, runtime_logger)
+    with runtime_logger.stage(STAGE_MARKDOWN_GENERATION):
+        markdown = _generate_markdown(request, cleaned)
+    with runtime_logger.stage(STAGE_SAVE_OUTPUT):
+        note = _write_obsidian_note(request, markdown)
     artifacts = RealCoursePipelineArtifacts(
         chunk=chunk,
         transcript=transcript,
@@ -285,6 +297,7 @@ def _clean_transcript(
     request: RealCoursePipelineRequest,
     transcript: TranscriptArtifact,
     cleaning_provider: TranscriptCleaningProvider | None,
+    logger: RuntimeLogger,
 ) -> CleanedTranscriptArtifact:
     provider = cleaning_provider or DeepSeekCleaningProvider(model=request.model)
     title_hint = f"Use this title if it fits the content: {request.title}." if request.title else ""
@@ -307,28 +320,30 @@ def _clean_transcript(
         style_guide="Clear, structured course notes for long-term review.",
         prompt_version="real-course-cleaning-v1",
     )
-    try:
-        profile = load_knowledge_profile(
-            request.profile,
-            custom_profile_path=request.custom_profile_path,
-        )
-    except ValueError as exc:
-        raise RealCoursePipelineError(str(exc)) from exc
+    with logger.stage(STAGE_PROFILE_LOADING):
+        try:
+            profile = load_knowledge_profile(
+                request.profile,
+                custom_profile_path=request.custom_profile_path,
+            )
+        except ValueError as exc:
+            raise RealCoursePipelineError(str(exc)) from exc
     prompt = compose_cleaning_prompt(prompt, profile)
-    result = create_default_transcript_cleaner(provider=provider).clean(
-        TranscriptCleaningRequest(
-            transcript=transcript,
-            prompt=prompt,
-            config=TranscriptCleaningConfig(
-                model_name=request.model,
-                prompt_version=prompt.prompt_version,
-                env_path=request.env_path,
-            ),
-            run_id=request.run_id,
-            job_id=request.job_id,
-            task_id="real-course-cleaning",
+    with logger.stage(STAGE_DEEPSEEK_CLEANING):
+        result = create_default_transcript_cleaner(provider=provider).clean(
+            TranscriptCleaningRequest(
+                transcript=transcript,
+                prompt=prompt,
+                config=TranscriptCleaningConfig(
+                    model_name=request.model,
+                    prompt_version=prompt.prompt_version,
+                    env_path=request.env_path,
+                ),
+                run_id=request.run_id,
+                job_id=request.job_id,
+                task_id="real-course-cleaning",
+            )
         )
-    )
     if not result.is_success or result.cleaned_transcript is None:
         raise RealCoursePipelineError(f"Transcript cleaning failed: {result.issues}")
     return result.cleaned_transcript
