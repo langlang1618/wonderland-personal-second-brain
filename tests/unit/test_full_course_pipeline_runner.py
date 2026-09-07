@@ -9,6 +9,11 @@ from ai_knowledge_pipeline.modules.chunking.types import (
     ChunkProcessOutput,
     ChunkProcessResult,
 )
+from ai_knowledge_pipeline.modules.transcription.runtime.youtube_subtitles import (
+    YouTubeSubtitleInspectionResult,
+    YouTubeSubtitleResult,
+    YouTubeSubtitleStatus,
+)
 from scripts.run_full_course_pipeline import (
     CleanupSelection,
     FullCoursePipelineError,
@@ -74,6 +79,232 @@ def test_full_course_pipeline_source_is_required() -> None:
         _parse_args([])
 
     assert exc.value.code == 2
+
+
+def test_youtube_subtitles_skip_media_and_whisper_and_continue_downstream(tmp_path) -> None:
+    calls: list[str] = []
+    transcript_dir = tmp_path / "transcripts"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    def extract(request):
+        calls.append("subtitles")
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        transcript_path = request.output_dir / "merged_transcript.txt"
+        transcript_path.write_text("YouTube subtitle transcript", encoding="utf-8")
+        return YouTubeSubtitleResult(
+            status=YouTubeSubtitleStatus.AVAILABLE,
+            transcript_path=transcript_path,
+        )
+
+    def fail_media(request):
+        raise AssertionError("media ingestion must be skipped")
+
+    def fail_whisper(request):
+        raise AssertionError("Whisper must be skipped")
+
+    def course(request):
+        calls.append("course")
+        assert request.local_transcript_path.read_text(encoding="utf-8") == (
+            "YouTube subtitle transcript"
+        )
+        return SimpleNamespace(obsidian_note_path=vault / "note.md")
+
+    result = run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source="https://www.youtube.com/watch?v=abc",
+            title="YouTube Course",
+            vault_path=vault,
+            output_dir=tmp_path / "media",
+            transcript_output_dir=transcript_dir,
+        ),
+        subtitle_inspector=lambda source: YouTubeSubtitleInspectionResult(
+            status=YouTubeSubtitleStatus.AVAILABLE,
+            manual_languages=("en",),
+            executable="/test/yt-dlp",
+            version="test",
+        ),
+        subtitle_extractor=extract,
+        media_ingestion_runner=fail_media,
+        whisper_runner=fail_whisper,
+        course_runner=course,
+    )
+
+    assert calls == ["subtitles", "course"]
+    assert result.merged_transcript_path == transcript_dir / "merged_transcript.txt"
+    assert result.raw_audio_path is None
+    assert result.chunks_dir is None
+
+
+@pytest.mark.parametrize("subtitle_status", [
+    YouTubeSubtitleStatus.UNAVAILABLE,
+    YouTubeSubtitleStatus.FAILED,
+])
+def test_youtube_subtitle_failure_falls_back_to_media_and_whisper(
+    tmp_path,
+    subtitle_status,
+) -> None:
+    calls: list[str] = []
+    transcript_dir = tmp_path / "transcripts"
+
+    def extract(request):
+        calls.append("subtitles")
+        return YouTubeSubtitleResult(status=subtitle_status, message="not usable")
+
+    def media(request):
+        calls.append("media")
+        return _media_result(tmp_path)
+
+    def whisper(request):
+        calls.append("whisper")
+        assert request.language == "en"
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("Whisper transcript with enough useful English text.", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    def course(request):
+        calls.append("course")
+        return SimpleNamespace(obsidian_note_path=tmp_path / "note.md")
+
+    run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source="https://youtu.be/abc",
+            title="YouTube Course",
+            vault_path=tmp_path,
+            transcript_output_dir=transcript_dir,
+        ),
+        subtitle_inspector=lambda source: YouTubeSubtitleInspectionResult(
+            status=YouTubeSubtitleStatus.AVAILABLE,
+            manual_languages=("en",),
+            executable="/test/yt-dlp",
+            version="test",
+        ),
+        subtitle_extractor=extract,
+        media_ingestion_runner=media,
+        whisper_runner=whisper,
+        course_runner=course,
+    )
+
+    assert calls == ["subtitles", "media", "whisper", "course"]
+
+
+def test_finance_youtube_keeps_existing_zh_subtitle_and_whisper_behavior(tmp_path) -> None:
+    calls: list[str] = []
+
+    def extract(request):
+        calls.append("subtitles")
+        assert request.language == "zh"
+        return YouTubeSubtitleResult(status=YouTubeSubtitleStatus.UNAVAILABLE)
+
+    def whisper(request):
+        calls.append("whisper")
+        assert request.language == "zh"
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("这是一个长度足够的中文金融课程转录文本。", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source="https://youtu.be/finance",
+            title="Finance Course",
+            profile="finance",
+            vault_path=tmp_path,
+            transcript_output_dir=tmp_path / "transcripts",
+        ),
+        subtitle_inspector=lambda source: pytest.fail(
+            "Finance must retain the existing subtitle path"
+        ),
+        subtitle_extractor=extract,
+        media_ingestion_runner=lambda request: _media_result(tmp_path),
+        whisper_runner=whisper,
+        course_runner=lambda request: SimpleNamespace(obsidian_note_path=tmp_path / "note.md"),
+    )
+
+    assert calls == ["subtitles", "whisper"]
+
+
+def test_youtube_subtitle_exception_falls_back_with_warning(tmp_path) -> None:
+    stream = __import__("io").StringIO()
+    logger = create_runtime_logger(stream)
+
+    def extract(request):
+        raise RuntimeError("broken subtitle response")
+
+    def whisper(request):
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("Whisper transcript with enough useful English text.", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source="https://www.youtube.com/watch?v=abc",
+            title="YouTube Course",
+            vault_path=tmp_path,
+            transcript_output_dir=tmp_path / "transcripts",
+        ),
+        subtitle_inspector=lambda source: YouTubeSubtitleInspectionResult(
+            status=YouTubeSubtitleStatus.AVAILABLE,
+            manual_languages=("en",),
+            executable="/test/yt-dlp",
+            version="test",
+        ),
+        subtitle_extractor=extract,
+        media_ingestion_runner=lambda request: _media_result(tmp_path),
+        whisper_runner=whisper,
+        course_runner=lambda request: SimpleNamespace(obsidian_note_path=tmp_path / "note.md"),
+        logger=logger,
+    )
+
+    assert "[WARNING] YouTube subtitle extraction failed; falling back to Whisper." in stream.getvalue()
+    assert "[ERROR] YouTube Subtitle Extraction failed" not in stream.getvalue()
+
+
+def test_non_youtube_webpage_does_not_attempt_subtitles(tmp_path) -> None:
+    calls: list[str] = []
+
+    def extract(request):
+        calls.append("subtitles")
+        raise AssertionError("subtitle extraction must not run")
+
+    def whisper(request):
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        merged = request.output_dir / "merged_transcript.txt"
+        merged.write_text("Whisper transcript", encoding="utf-8")
+        return LocalWhisperRuntimeResult(
+            chunk_transcripts=(),
+            merged_transcript_path=merged,
+            manifest_path=request.output_dir / "manifest.json",
+        )
+
+    run_full_course_pipeline(
+        FullCoursePipelineRequest(
+            source="https://example.com/watch/abc",
+            title="Web Course",
+            vault_path=tmp_path,
+            transcript_output_dir=tmp_path / "transcripts",
+        ),
+        subtitle_extractor=extract,
+        media_ingestion_runner=lambda request: _media_result(tmp_path),
+        whisper_runner=whisper,
+        course_runner=lambda request: SimpleNamespace(obsidian_note_path=tmp_path / "note.md"),
+    )
+
+    assert calls == []
 
 
 def test_full_course_pipeline_dry_run_plans_without_whisper_or_deepseek(tmp_path) -> None:

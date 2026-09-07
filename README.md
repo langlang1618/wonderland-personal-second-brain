@@ -57,15 +57,18 @@ The system focuses on:
 
 # Current Status
 
-## Wonderland v1.6.1 — Engineering Release
+## Wonderland v1.8.0 — Transcript Acquisition Capability
 
 Wonderland has evolved from a simple content processing script into a complete local knowledge application system.
 
 Current capabilities:
 
 - ✅ Multi-source media ingestion
+- ✅ YouTube manual and automatic English subtitle acquisition
+- ✅ Deterministic transcript acquisition with Whisper fallback
 - ✅ Local Whisper transcription pipeline
 - ✅ LLM-powered knowledge cleaning
+- ✅ AI / Tech direct transcript output without LLM rewriting
 - ✅ Knowledge Profile System
 - ✅ Markdown generation
 - ✅ Obsidian integration
@@ -80,7 +83,7 @@ Validation:
 
 - 16 real courses processed
 - Approximately 40 hours of content transformed
-- 183 automated tests passed
+- 225 automated tests passed
 
 ---
 
@@ -121,7 +124,19 @@ This allows large courses and long-form content to be processed locally.
 
 ---
 
-## 3. Knowledge Cleaning & Domain Profiles
+## 3. Transcript Acquisition
+
+For AI / Tech content, Wonderland can acquire an English transcript before media processing:
+
+1. Prefer manual English YouTube subtitles.
+2. Fall back to automatic English captions.
+3. Fall back to local Whisper transcription when native subtitles are unavailable or unusable.
+
+Automatic captions receive deterministic rolling-overlap cleanup. Accepted transcripts continue through the existing `merged_transcript.txt` handoff, and AI / Tech notes can preserve the transcript directly without DeepSeek rewriting.
+
+---
+
+## 4. Knowledge Cleaning & Domain Profiles
 
 Wonderland separates raw transcription from structured knowledge generation.
 
@@ -137,7 +152,7 @@ Profiles allow the same pipeline to adapt to different knowledge domains.
 
 ---
 
-## 4. Runtime Observability
+## 5. Runtime Observability
 
 Wonderland v1.6.1 introduced an engineering observability layer.
 
@@ -232,6 +247,7 @@ The architecture separates:
 | v1.5.2 | Job history and execution control |
 | v1.6.0 | Knowledge Profile System |
 | v1.6.1 | Observability, Metrics and Robustness |
+| v1.8.0 | Transcript Acquisition Capability |
 
 ---
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import inspect
 import re
 import shutil
@@ -14,10 +15,19 @@ from pathlib import Path
 from typing import Callable, Protocol, Sequence
 from urllib.parse import urlparse
 
+from ai_knowledge_pipeline.core.source import (
+    MediaKind,
+    SourceAccess,
+    SourceData,
+    SourceKind,
+    SourceLocation,
+    SourceMetadata,
+)
 from ai_knowledge_pipeline.infra.runtime_logging import (
     STAGE_AUDIO_CHUNKING,
     STAGE_AUDIO_EXTRACTION,
     STAGE_PROFILE_LOADING,
+    STAGE_YOUTUBE_SUBTITLE_EXTRACTION,
     RuntimeLogger,
     create_runtime_logger,
     print_pipeline_summary,
@@ -30,6 +40,23 @@ from ai_knowledge_pipeline.modules.chunking.types import (
 )
 from ai_knowledge_pipeline.modules.cleaning import KnowledgeProfileName
 from ai_knowledge_pipeline.modules.transcription import FasterWhisperModelSize
+from ai_knowledge_pipeline.modules.transcription.acquisition import (
+    TranscriptAcquisitionCoordinator,
+    TranscriptAcquisitionError,
+    TranscriptAcquisitionGoal,
+    TranscriptAcquisitionPolicy,
+    TranscriptAcquisitionRequest,
+    WhisperFallbackResult,
+)
+from ai_knowledge_pipeline.modules.transcription.runtime.youtube_subtitles import (
+    YouTubeSubtitleExtractor,
+    YouTubeSubtitleInspectionResult,
+    YouTubeSubtitleInspector,
+    YouTubeSubtitleRequest,
+    YouTubeSubtitleResult,
+    resolve_ytdlp_executable,
+)
+from ai_knowledge_pipeline.modules.sources.rules import is_youtube_host
 from scripts.run_local_whisper_transcription import (
     LocalWhisperRuntimeError,
     LocalWhisperRuntimeRequest,
@@ -94,6 +121,9 @@ class FullCoursePipelineRequest:
     dry_run: bool = False
     env_path: Path = Path(".env")
     cleanup: str = CleanupSelection.NONE.value
+    transcript_goal: TranscriptAcquisitionGoal | None = None
+    subtitle_language_preferences: tuple[str, ...] = ()
+    whisper_language: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +171,8 @@ class FullCoursePipelineError(RuntimeError):
 MediaIngestionRunner = Callable[[MediaIngestionRequest], MediaIngestionBatchResult]
 WhisperRunner = Callable[[LocalWhisperRuntimeRequest], LocalWhisperRuntimeResult]
 CourseRunner = Callable[[RealCoursePipelineRequest], RealCoursePipelineResult]
+SubtitleExtractor = Callable[[YouTubeSubtitleRequest], YouTubeSubtitleResult]
+SubtitleInspector = Callable[[str], YouTubeSubtitleInspectionResult]
 
 
 class FfmpegRunner(Protocol):
@@ -163,6 +195,18 @@ class LocalMediaIngestionResult:
     chunk_paths: tuple[Path, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class RemoteWhisperResult:
+    """Existing remote-media and Whisper outputs used by acquisition fallback."""
+
+    course_dir: Path
+    raw_audio_path: Path
+    chunks_dir: Path
+    chunk_paths: tuple[Path, ...]
+    merged_transcript_path: Path
+    warnings: tuple[str, ...] = ()
+
+
 SUPPORTED_AUDIO_SUFFIXES = {".mp3", ".m4a", ".wav", ".aac", ".flac"}
 SUPPORTED_VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".ts"}
 OUTPUT_AUDIO_FORMAT = "mp3"
@@ -175,6 +219,8 @@ def run_full_course_pipeline(
     whisper_runner: WhisperRunner = run_local_whisper_transcription,
     course_runner: CourseRunner = run_real_course_pipeline,
     ffmpeg_runner: FfmpegRunner | None = None,
+    subtitle_extractor: SubtitleExtractor | None = None,
+    subtitle_inspector: SubtitleInspector | None = None,
     logger: RuntimeLogger | None = None,
 ) -> FullCoursePipelineResult:
     """Run one URL-like source through the complete local-first course pipeline."""
@@ -187,7 +233,83 @@ def run_full_course_pipeline(
         cleanup_policy = _parse_cleanup(request.cleanup)
         runtime_logger.info(f"Profile: {request.profile}")
         runtime_logger.info(f"Source type: {resolved_type.value}")
-    if resolved_type in {FullCourseSourceType.M3U8, FullCourseSourceType.WEBPAGE}:
+    transcript_dir = _transcript_dir(request, title)
+    subtitle_first = _is_youtube_url(request.source) and not request.dry_run
+    english_acquisition = subtitle_first and _uses_english_acquisition(request)
+    merged_path = (
+        None
+        if english_acquisition
+        else _existing_merged_transcript_path(transcript_dir, request.skip_existing)
+    )
+    subtitle_used = False
+    if english_acquisition:
+        fallback_state: RemoteWhisperResult | None = None
+
+        def whisper_fallback(language: str | None) -> WhisperFallbackResult:
+            nonlocal fallback_state
+            fallback_state = _run_remote_media_whisper(
+                request,
+                title=title,
+                transcript_dir=transcript_dir,
+                whisper_language=language,
+                media_ingestion_runner=media_ingestion_runner,
+                whisper_runner=whisper_runner,
+                logger=runtime_logger,
+            )
+            return WhisperFallbackResult(
+                transcript_path=fallback_state.merged_transcript_path,
+                warnings=fallback_state.warnings,
+            )
+
+        policy = _transcript_acquisition_policy(request)
+        source = _youtube_source_data(request.source, title, policy.expected_language)
+        coordinator = TranscriptAcquisitionCoordinator(
+            subtitle_inspector=subtitle_inspector or YouTubeSubtitleInspector().inspect,
+            subtitle_extractor=subtitle_extractor or YouTubeSubtitleExtractor().extract,
+            logger=runtime_logger,
+        )
+        try:
+            acquisition = coordinator.acquire(
+                TranscriptAcquisitionRequest(
+                    source=source,
+                    output_dir=transcript_dir,
+                    policy=policy,
+                    skip_existing=request.skip_existing,
+                ),
+                whisper_fallback=whisper_fallback,
+            )
+        except TranscriptAcquisitionError as exc:
+            raise FullCoursePipelineError(f"Transcript acquisition failed: {exc}") from exc
+        merged_path = acquisition.transcript_path
+        subtitle_used = fallback_state is None
+        if fallback_state is None:
+            course_dir = request.output_dir / _slugify(title)
+            raw_audio_path = None
+            chunks_dir = None
+            chunk_paths = ()
+        else:
+            course_dir = fallback_state.course_dir
+            raw_audio_path = fallback_state.raw_audio_path
+            chunks_dir = fallback_state.chunks_dir
+            chunk_paths = fallback_state.chunk_paths
+    elif subtitle_first and merged_path is None:
+        merged_path = _try_youtube_subtitles(
+            request,
+            transcript_dir=transcript_dir,
+            extractor=subtitle_extractor or YouTubeSubtitleExtractor().extract,
+            logger=runtime_logger,
+        )
+        subtitle_used = merged_path is not None
+
+    if not english_acquisition and merged_path is not None and subtitle_first:
+        course_dir = request.output_dir / _slugify(title)
+        raw_audio_path = None
+        chunks_dir = None
+        chunk_paths = ()
+    elif not english_acquisition and resolved_type in {
+        FullCourseSourceType.M3U8,
+        FullCourseSourceType.WEBPAGE,
+    }:
         media_result = _run_with_optional_logger(
             media_ingestion_runner,
             MediaIngestionRequest(
@@ -197,6 +319,7 @@ def run_full_course_pipeline(
                 chunk_minutes=request.chunk_minutes,
                 dry_run=request.dry_run,
                 skip_existing=request.skip_existing,
+                ytdlp_binary=resolve_ytdlp_executable() or "yt-dlp",
             ),
             runtime_logger,
         )
@@ -209,7 +332,7 @@ def run_full_course_pipeline(
             raise FullCoursePipelineError(
                 f"Media ingestion failed: {'; '.join(media_item.errors) or 'unknown error'}"
             )
-    else:
+    elif not english_acquisition:
         local_result = _run_local_media_ingestion(
             request,
             title=title,
@@ -222,7 +345,6 @@ def run_full_course_pipeline(
         chunks_dir = local_result.chunks_dir
         chunk_paths = local_result.chunk_paths
 
-    transcript_dir = _transcript_dir(request, title)
     if request.dry_run:
         cleanup_result = _cleanup_plan(
             policy=cleanup_policy,
@@ -244,11 +366,9 @@ def run_full_course_pipeline(
             dry_run=True,
         )
 
-    if not chunk_paths:
-        raise FullCoursePipelineError(f"No audio chunks were produced in: {chunks_dir}")
-
-    merged_path = _existing_merged_transcript_path(transcript_dir, request.skip_existing)
     if merged_path is None:
+        if not chunk_paths:
+            raise FullCoursePipelineError(f"No audio chunks were produced in: {chunks_dir}")
         try:
             whisper_result = _run_with_optional_logger(
                 whisper_runner,
@@ -278,7 +398,7 @@ def run_full_course_pipeline(
             raise FullCoursePipelineError(
                 "Whisper transcription did not produce merged_transcript.txt."
             )
-    else:
+    elif not subtitle_used:
         runtime_logger.info(f"skip_existing: using existing merged transcript: {merged_path}")
 
     vault_path = _resolve_vault_path(request)
@@ -320,6 +440,107 @@ def run_full_course_pipeline(
     )
 
 
+def _try_youtube_subtitles(
+    request: FullCoursePipelineRequest,
+    *,
+    transcript_dir: Path,
+    extractor: SubtitleExtractor,
+    logger: RuntimeLogger,
+) -> Path | None:
+    """Attempt YouTube subtitles and degrade cleanly to the Whisper path."""
+
+    extraction_error: Exception | None = None
+    with logger.stage(STAGE_YOUTUBE_SUBTITLE_EXTRACTION):
+        try:
+            result = extractor(
+                YouTubeSubtitleRequest(
+                    source_url=request.source,
+                    output_dir=transcript_dir,
+                    language=request.language,
+                )
+            )
+        except Exception as exc:
+            extraction_error = exc
+            result = None
+    if extraction_error is not None:
+        logger.warning(
+            "YouTube subtitle extraction failed; falling back to Whisper. "
+            f"{extraction_error}"
+        )
+        return None
+    assert result is not None
+    if result.is_available and result.transcript_path is not None:
+        logger.info(f"Using YouTube subtitles: {result.transcript_path}")
+        return result.transcript_path
+    if result.status.value == "failed":
+        logger.warning(
+            "YouTube subtitle extraction failed; falling back to Whisper. "
+            f"{result.message or ''}".rstrip()
+        )
+    else:
+        logger.warning("YouTube subtitles unavailable; falling back to Whisper.")
+    return None
+
+
+def _is_youtube_url(source: str) -> bool:
+    parsed = urlparse(source)
+    return parsed.scheme.lower() in {"http", "https"} and is_youtube_host(
+        (parsed.hostname or "").lower()
+    )
+
+
+def _uses_english_acquisition(request: FullCoursePipelineRequest) -> bool:
+    goal = request.transcript_goal
+    if goal is not None:
+        return TranscriptAcquisitionGoal(goal) is TranscriptAcquisitionGoal.ENGLISH_LEARNING
+    return KnowledgeProfileName(request.profile) is KnowledgeProfileName.AI
+
+
+def _transcript_acquisition_policy(
+    request: FullCoursePipelineRequest,
+) -> TranscriptAcquisitionPolicy:
+    """Map runner defaults into explicit acquisition-language choices."""
+
+    if _uses_english_acquisition(request):
+        return TranscriptAcquisitionPolicy(
+            goal=TranscriptAcquisitionGoal.ENGLISH_LEARNING,
+            subtitle_language_preferences=(
+                request.subtitle_language_preferences
+                or ("en", "en-US", "en-GB")
+            ),
+            whisper_language=request.whisper_language or "en",
+            expected_language="en",
+        )
+    language = request.whisper_language or request.language
+    return TranscriptAcquisitionPolicy(
+        goal=TranscriptAcquisitionGoal.KNOWLEDGE_INGESTION,
+        subtitle_language_preferences=request.subtitle_language_preferences or (),
+        whisper_language=language,
+        expected_language=language,
+    )
+
+
+def _youtube_source_data(
+    source_url: str,
+    title: str,
+    language: str | None,
+) -> SourceData:
+    source_hash = hashlib.sha256(source_url.encode("utf-8")).hexdigest()[:16]
+    return SourceData(
+        source_id=f"youtube_{source_hash}",
+        kind=SourceKind.YOUTUBE,
+        media_kind=MediaKind.VIDEO,
+        location=SourceLocation(access=SourceAccess.REMOTE, uri=source_url),
+        metadata=SourceMetadata(
+            title=title,
+            language=language,
+            source_url=source_url,
+            canonical_url=source_url,
+            origin_platform="youtube",
+        ),
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint for the full course pipeline runner."""
 
@@ -345,6 +566,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         skip_existing=args.skip_existing,
         dry_run=args.dry_run,
         cleanup=args.cleanup,
+        transcript_goal=(
+            TranscriptAcquisitionGoal(args.transcript_goal)
+            if args.transcript_goal
+            else None
+        ),
+        subtitle_language_preferences=_parse_language_preferences(
+            args.subtitle_languages
+        ),
+        whisper_language=args.whisper_language,
     )
     runtime_logger = create_runtime_logger()
     try:
@@ -387,6 +617,19 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=FasterWhisperModelSize.SMALL.value,
     )
     parser.add_argument("--language", default="zh")
+    parser.add_argument(
+        "--transcript-goal",
+        choices=tuple(goal.value for goal in TranscriptAcquisitionGoal),
+        help="Optional transcript acquisition goal; AI defaults to English learning.",
+    )
+    parser.add_argument(
+        "--subtitle-languages",
+        help="Optional comma-separated subtitle language preference order.",
+    )
+    parser.add_argument(
+        "--whisper-language",
+        help="Optional Whisper fallback language, separate from subtitle selection.",
+    )
     parser.add_argument("--chunk-minutes", type=int, default=30)
     parser.add_argument("--vault", help="Obsidian vault path. Falls back to OBSIDIAN_VAULT_PATH.")
     parser.add_argument("--output-dir", default="data/media_ingestion")
@@ -402,6 +645,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Cleanup generated media artifacts after a successful run.",
     )
     return parser.parse_args(argv)
+
+
+def _parse_language_preferences(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
 
 
 def _cleanup_arg(value: str) -> str:
@@ -436,6 +685,79 @@ def _run_with_optional_logger(runner, request, logger: RuntimeLogger):
     if supports_logger:
         return runner(request, logger=logger)
     return runner(request)
+
+
+def _run_remote_media_whisper(
+    request: FullCoursePipelineRequest,
+    *,
+    title: str,
+    transcript_dir: Path,
+    whisper_language: str | None,
+    media_ingestion_runner: MediaIngestionRunner,
+    whisper_runner: WhisperRunner,
+    logger: RuntimeLogger,
+) -> RemoteWhisperResult:
+    """Run the existing remote media and Whisper path without changing it."""
+
+    media_result = _run_with_optional_logger(
+        media_ingestion_runner,
+        MediaIngestionRequest(
+            urls=(request.source,),
+            output_dir=request.output_dir,
+            title=title,
+            chunk_minutes=request.chunk_minutes,
+            dry_run=False,
+            skip_existing=request.skip_existing,
+            ytdlp_binary=resolve_ytdlp_executable() or "yt-dlp",
+        ),
+        logger,
+    )
+    media_item = _single_media_item(media_result)
+    if media_item.status is MediaIngestionStatus.FAILED:
+        raise TranscriptAcquisitionError(
+            f"Media ingestion failed: {'; '.join(media_item.errors) or 'unknown error'}"
+        )
+    if not media_item.chunk_paths:
+        raise TranscriptAcquisitionError(
+            f"No audio chunks were produced in: {media_item.plan.chunks_dir}"
+        )
+    try:
+        whisper_result = _run_with_optional_logger(
+            whisper_runner,
+            LocalWhisperRuntimeRequest(
+                chunks_dir=media_item.plan.chunks_dir,
+                output_dir=transcript_dir,
+                model_size=request.model_size,
+                language=whisper_language,
+                merge=True,
+            ),
+            logger,
+        )
+    except LocalWhisperRuntimeError as exc:
+        raise TranscriptAcquisitionError(f"Whisper transcription failed: {exc}") from exc
+    if whisper_result.errors and not whisper_result.chunk_transcripts:
+        raise TranscriptAcquisitionError(
+            "Whisper transcription produced no usable transcript text: "
+            f"{'; '.join(whisper_result.errors)}"
+        )
+    merged_path = whisper_result.merged_transcript_path
+    if merged_path is None or not merged_path.exists():
+        raise TranscriptAcquisitionError(
+            "Whisper transcription did not produce merged_transcript.txt."
+        )
+    warnings = tuple(whisper_result.errors)
+    if warnings:
+        logger.warning(
+            f"Whisper transcription completed with warnings: {'; '.join(warnings)}"
+        )
+    return RemoteWhisperResult(
+        course_dir=media_item.plan.course_dir,
+        raw_audio_path=media_item.plan.downloaded_audio_path,
+        chunks_dir=media_item.plan.chunks_dir,
+        chunk_paths=media_item.chunk_paths,
+        merged_transcript_path=merged_path,
+        warnings=warnings,
+    )
 
 
 def _run_local_media_ingestion(

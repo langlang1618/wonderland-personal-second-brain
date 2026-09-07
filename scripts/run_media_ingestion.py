@@ -71,6 +71,7 @@ class MediaIngestionRequest:
     chunk_minutes: int = 30
     dry_run: bool = False
     skip_existing: bool = False
+    ytdlp_binary: str = "yt-dlp"
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,7 +293,7 @@ def _build_plan(
     chunk_pattern = chunks_dir / f"chunk_%03d.{request.audio_format}"
     download_template = raw_audio_dir / "course.%(ext)s"
     download_command = (
-        "yt-dlp",
+        request.ytdlp_binary,
         "--no-playlist",
         "--extract-audio",
         "--audio-format",

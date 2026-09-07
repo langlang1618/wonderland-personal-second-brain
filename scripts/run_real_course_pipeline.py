@@ -39,6 +39,7 @@ from ai_knowledge_pipeline.modules.cleaning import (
     CleanedTranscriptArtifact,
     CleaningPromptSchema,
     DeepSeekCleaningProvider,
+    DirectTranscriptCleaningProvider,
     KnowledgeProfileName,
     TranscriptCleaningConfig,
     TranscriptCleaningProvider,
@@ -51,6 +52,7 @@ from ai_knowledge_pipeline.modules.markdown import (
     MarkdownArtifact,
     MarkdownGenerationConfig,
     MarkdownGenerationRequest,
+    MarkdownOutputStyle,
     create_default_markdown_generator,
 )
 from ai_knowledge_pipeline.modules.obsidian import (
@@ -122,10 +124,19 @@ def run_real_course_pipeline(
     """Run one local transcript through cleaning, Markdown, and Obsidian."""
 
     runtime_logger = logger or create_runtime_logger()
-    _validate_request(request, require_api_key=cleaning_provider is None)
+    direct_transcript_mode = _is_ai_profile(request.profile)
+    _validate_request(
+        request,
+        require_api_key=cleaning_provider is None and not direct_transcript_mode,
+    )
     chunk = _create_transcript_backed_chunk(request)
     transcript = _import_local_transcript(request, chunk)
-    cleaned = _clean_transcript(request, transcript, cleaning_provider, runtime_logger)
+    if direct_transcript_mode:
+        runtime_logger.info("AI / Tech Direct Transcript mode")
+        runtime_logger.info("DeepSeek Cleaning skipped for AI / Tech transcript output")
+        cleaned = _prepare_direct_transcript(request, transcript)
+    else:
+        cleaned = _clean_transcript(request, transcript, cleaning_provider, runtime_logger)
     with runtime_logger.stage(STAGE_MARKDOWN_GENERATION):
         markdown = _generate_markdown(request, cleaned)
     with runtime_logger.stage(STAGE_SAVE_OUTPUT):
@@ -349,6 +360,40 @@ def _clean_transcript(
     return result.cleaned_transcript
 
 
+def _prepare_direct_transcript(
+    request: RealCoursePipelineRequest,
+    transcript: TranscriptArtifact,
+) -> CleanedTranscriptArtifact:
+    """Materialize a source-agnostic transcript artifact without an LLM call."""
+
+    result = create_default_transcript_cleaner(
+        provider=DirectTranscriptCleaningProvider()
+    ).clean(
+        TranscriptCleaningRequest(
+            transcript=transcript,
+            prompt=CleaningPromptSchema(
+                system_instruction="Deterministic direct transcript output.",
+                task_instruction="Preserve transcript content and order.",
+                prompt_version="direct-transcript-v1",
+            ),
+            config=TranscriptCleaningConfig(
+                model_name="direct-transcript",
+                prompt_version="direct-transcript-v1",
+                env_path=request.env_path,
+            ),
+            run_id=request.run_id,
+            job_id=request.job_id,
+            task_id="real-course-direct-transcript",
+            metadata={"title": request.title or transcript.snapshot.metadata.title},
+        )
+    )
+    if not result.is_success or result.cleaned_transcript is None:
+        raise RealCoursePipelineError(
+            f"Direct transcript preparation failed: {result.issues}"
+        )
+    return result.cleaned_transcript
+
+
 def _generate_markdown(
     request: RealCoursePipelineRequest,
     cleaned: CleanedTranscriptArtifact,
@@ -356,7 +401,13 @@ def _generate_markdown(
     result = create_default_markdown_generator().generate(
         MarkdownGenerationRequest(
             cleaned_transcript=cleaned,
-            config=MarkdownGenerationConfig(),
+            config=MarkdownGenerationConfig(
+                output_style=(
+                    MarkdownOutputStyle.DIRECT_TRANSCRIPT
+                    if _is_ai_profile(request.profile)
+                    else MarkdownOutputStyle.KNOWLEDGE
+                )
+            ),
             run_id=request.run_id,
             job_id=request.job_id,
             task_id="real-course-markdown",
@@ -365,6 +416,10 @@ def _generate_markdown(
     if not result.is_success or result.markdown is None:
         raise RealCoursePipelineError(f"Markdown generation failed: {result.issues}")
     return result.markdown
+
+
+def _is_ai_profile(profile: KnowledgeProfileName | str) -> bool:
+    return KnowledgeProfileName(profile) is KnowledgeProfileName.AI
 
 
 def _write_obsidian_note(

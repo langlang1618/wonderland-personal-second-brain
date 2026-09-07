@@ -5,6 +5,9 @@ from ai_knowledge_pipeline.modules.cleaning.cleaner import (
     create_default_transcript_cleaner,
 )
 from ai_knowledge_pipeline.modules.cleaning.deepseek_provider import DeepSeekCleaningProvider
+from ai_knowledge_pipeline.modules.cleaning.direct_transcript_provider import (
+    DirectTranscriptCleaningProvider,
+)
 from ai_knowledge_pipeline.modules.cleaning.errors import (
     TranscriptCleaningErrorCode,
     TranscriptCleaningIssue,
@@ -49,6 +52,7 @@ __all__ = [
     "CleaningProviderKind",
     "CleaningProviderResult",
     "DeepSeekCleaningProvider",
+    "DirectTranscriptCleaningProvider",
     "DefaultTranscriptCleaner",
     "KeyInsight",
     "KnowledgeProfile",

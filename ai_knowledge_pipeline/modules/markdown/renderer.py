@@ -13,6 +13,7 @@ from ai_knowledge_pipeline.modules.markdown.errors import (
 from ai_knowledge_pipeline.modules.markdown.interfaces import MarkdownRenderer
 from ai_knowledge_pipeline.modules.markdown.types import (
     MarkdownGenerationRequest,
+    MarkdownOutputStyle,
     MarkdownRenderResult,
     YamlFrontmatter,
 )
@@ -63,7 +64,7 @@ def _frontmatter(request: MarkdownGenerationRequest) -> YamlFrontmatter:
     cleaned = request.cleaned_transcript
     ready = cleaned.markdown_ready
     tags = tuple(dict.fromkeys((*cleaned.snapshot.metadata.tags, *ready.semantic_tags)))
-    return {
+    frontmatter: dict = {
         "title": ready.title,
         "source_id": cleaned.source_id,
         "chunk_index": cleaned.chunk_index,
@@ -75,10 +76,18 @@ def _frontmatter(request: MarkdownGenerationRequest) -> YamlFrontmatter:
         ),
         "parent_snapshot_id": cleaned.snapshot.snapshot_id,
     }
+    if request.config.output_style is MarkdownOutputStyle.DIRECT_TRANSCRIPT:
+        frontmatter["profile"] = "AI / Tech"
+        frontmatter.pop("summary")
+    return frontmatter
 
 
 def _body(request: MarkdownGenerationRequest) -> str:
     ready = request.cleaned_transcript.markdown_ready
+    if request.config.output_style is MarkdownOutputStyle.DIRECT_TRANSCRIPT:
+        return "\n".join(
+            (f"# {ready.title}", "", "## Transcript", "", ready.cleaned_text)
+        )
     lines: list[str] = ["# AI整理部分", "", f"## {ready.title}", ""]
 
     if request.config.include_action_items and ready.action_items:

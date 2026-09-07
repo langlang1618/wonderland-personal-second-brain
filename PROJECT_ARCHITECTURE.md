@@ -125,13 +125,15 @@ module/
 
 #### `modules/transcription/` — 语音转录
 
-- **职责**：将音频片段转写为文本（含时间戳）
+- **职责**：从原生字幕或音频转录中获取统一文本，并将音频片段转写为文本（含时间戳）
 - **核心组件**：
+  - `TranscriptAcquisitionCoordinator` — 检查并选择 YouTube 手动字幕、自动字幕或 Whisper 回退路径
+  - `YouTubeSubtitleInspector` / `YouTubeSubtitleExtractor` — 通过 yt-dlp 获取并规范化原生字幕
   - `DefaultTranscriber` — 编排器，依赖可插拔的 `TranscriptionProvider`
   - `FasterWhisperProvider` — 基于 faster-whisper 的本地转录实现
   - `LocalWhisperProvider` — 从本地预生成的转录文件导入
   - `DemoTranscriptionProvider` — 演示用 Mock 实现
-- **子包 `runtime/`**：faster-whisper 运行时管理，含 `FasterWhisperModelFactory`（模型加载）、`TranscriptMerger`（切片合并）
+- **子包 `runtime/`**：faster-whisper 运行时与 YouTube 字幕适配，含 `FasterWhisperModelFactory`（模型加载）、`TranscriptMerger`（切片合并）和自动字幕滚动重叠清理
 
 #### `modules/cleaning/` — AI 清洗原始转录
 
@@ -140,6 +142,7 @@ module/
   - `DefaultTranscriptCleaner` — 编排器
   - `DeepSeekCleaningProvider` — 通过 DeepSeek API 清洗
   - `OpenAICleaningProvider` — 通过 OpenAI API 清洗
+  - `DirectTranscriptCleaningProvider` — AI / Tech 模式的确定性转录直通，不调用 LLM
   - `DemoCleaningProvider` — 演示用 Mock
 - **子包 `profiles/`**：清洗提示模板系统
   - `base.md` — 基础清洗指令（语言、格式、质量控制）

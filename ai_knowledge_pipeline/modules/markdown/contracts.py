@@ -21,6 +21,7 @@ from ai_knowledge_pipeline.modules.markdown.types import (
     MarkdownGenerationRequest,
     MarkdownGenerationResult,
     MarkdownGenerationStatus,
+    MarkdownOutputStyle,
     MarkdownRenderResult,
     YamlFrontmatter,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "MarkdownGenerationRequest",
     "MarkdownGenerationResult",
     "MarkdownGenerationStatus",
+    "MarkdownOutputStyle",
     "MarkdownGenerator",
     "MarkdownRenderResult",
     "MarkdownRenderer",

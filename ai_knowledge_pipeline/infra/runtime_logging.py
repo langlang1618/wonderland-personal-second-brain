@@ -17,6 +17,7 @@ STAGE_WHISPER_TRANSCRIPTION = "Whisper Transcription"
 STAGE_DEEPSEEK_CLEANING = "DeepSeek Cleaning"
 STAGE_MARKDOWN_GENERATION = "Markdown Generation"
 STAGE_SAVE_OUTPUT = "Save Output"
+STAGE_YOUTUBE_SUBTITLE_EXTRACTION = "YouTube Subtitle Extraction"
 
 
 class RuntimeMetricStatus(StrEnum):

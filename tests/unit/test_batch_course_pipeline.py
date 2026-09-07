@@ -207,6 +207,7 @@ def test_batch_pipeline_skip_existing_uses_expected_note_path(tmp_path) -> None:
         BatchCoursePipelineRequest(
             input_dir=input_dir,
             obsidian_vault_path=vault_path,
+            profile=KnowledgeProfileName.FINANCE,
             tags=("有钱有闲",),
             title_prefix="26.5.10直播",
             skip_existing=True,
@@ -235,6 +236,7 @@ def test_batch_pipeline_continues_after_single_file_failure(tmp_path) -> None:
         BatchCoursePipelineRequest(
             input_dir=input_dir,
             obsidian_vault_path=vault_path,
+            profile=KnowledgeProfileName.FINANCE,
             title_prefix="Batch",
         ),
         cleaning_provider=BatchMockCleaningProvider(fail_when="please fail"),

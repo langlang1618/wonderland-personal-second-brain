@@ -30,6 +30,13 @@ class MarkdownGenerationStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class MarkdownOutputStyle(StrEnum):
+    """Supported Markdown body strategies."""
+
+    KNOWLEDGE = "knowledge"
+    DIRECT_TRANSCRIPT = "direct_transcript"
+
+
 @dataclass(frozen=True, slots=True)
 class MarkdownGenerationConfig:
     """Configuration knobs for Markdown generation."""
@@ -41,6 +48,7 @@ class MarkdownGenerationConfig:
     include_action_items: bool = True
     include_tags_section: bool = True
     file_extension: str = ".md"
+    output_style: MarkdownOutputStyle = MarkdownOutputStyle.KNOWLEDGE
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +125,7 @@ __all__ = [
     "MarkdownGenerationRequest",
     "MarkdownGenerationResult",
     "MarkdownGenerationStatus",
+    "MarkdownOutputStyle",
     "MarkdownRenderResult",
     "YamlFrontmatter",
     "YamlScalar",

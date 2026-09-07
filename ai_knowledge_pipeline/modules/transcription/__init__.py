@@ -1,5 +1,17 @@
 """Speech-to-text transcription module."""
 
+from ai_knowledge_pipeline.modules.transcription.acquisition import (
+    TranscriptAcquisitionCoordinator,
+    TranscriptAcquisitionError,
+    TranscriptAcquisitionGoal,
+    TranscriptAcquisitionMethod,
+    TranscriptAcquisitionPolicy,
+    TranscriptAcquisitionRequest,
+    TranscriptAcquisitionResult,
+    TranscriptValidationResult,
+    WhisperFallbackResult,
+    validate_transcript_path,
+)
 from ai_knowledge_pipeline.modules.transcription.contracts import (
     DefaultTranscriber,
     ChunkTranscriptArtifact,
@@ -30,6 +42,16 @@ from ai_knowledge_pipeline.modules.transcription.contracts import (
 )
 
 __all__ = [
+    "TranscriptAcquisitionCoordinator",
+    "TranscriptAcquisitionError",
+    "TranscriptAcquisitionGoal",
+    "TranscriptAcquisitionMethod",
+    "TranscriptAcquisitionPolicy",
+    "TranscriptAcquisitionRequest",
+    "TranscriptAcquisitionResult",
+    "TranscriptValidationResult",
+    "WhisperFallbackResult",
+    "validate_transcript_path",
     "DefaultTranscriber",
     "ChunkTranscriptArtifact",
     "FasterWhisperConfig",

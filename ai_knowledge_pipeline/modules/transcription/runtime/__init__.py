@@ -12,6 +12,18 @@ from ai_knowledge_pipeline.modules.transcription.runtime.types import (
     FasterWhisperConfig,
     FasterWhisperModelSize,
 )
+from ai_knowledge_pipeline.modules.transcription.runtime.youtube_subtitles import (
+    YouTubeSubtitleExtractor,
+    YouTubeSubtitleInspectionResult,
+    YouTubeSubtitleInspector,
+    YouTubeSubtitleKind,
+    YouTubeSubtitleRequest,
+    YouTubeSubtitleResult,
+    YouTubeSubtitleStatus,
+    build_youtube_subtitle_inspection_command,
+    normalize_vtt,
+    resolve_ytdlp_executable,
+)
 
 __all__ = [
     "ChunkTranscriptArtifact",
@@ -20,4 +32,14 @@ __all__ = [
     "FasterWhisperProvider",
     "TranscriptMergeResult",
     "TranscriptMerger",
+    "YouTubeSubtitleExtractor",
+    "YouTubeSubtitleInspectionResult",
+    "YouTubeSubtitleInspector",
+    "YouTubeSubtitleKind",
+    "YouTubeSubtitleRequest",
+    "YouTubeSubtitleResult",
+    "YouTubeSubtitleStatus",
+    "build_youtube_subtitle_inspection_command",
+    "normalize_vtt",
+    "resolve_ytdlp_executable",
 ]
